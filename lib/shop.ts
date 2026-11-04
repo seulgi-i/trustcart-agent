@@ -1,10 +1,11 @@
-import data from '@/data/products.json';
 import { z } from 'zod';
+import { formatUsd, lineTotalCents, usdToCents } from '@/src/domain/money';
+import { runtimeCatalog, type RuntimeProduct } from '@/src/server/catalog';
 
-export type Product = (typeof data)[number];
-export const products: Product[] = data;
+export type Product = RuntimeProduct;
+export const products: Product[] = runtimeCatalog();
 export const POLICY = { maxBudgetUSD: 500, maxQuantity: 5, requiresApproval: true } as const;
-export const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+export const money = formatUsd;
 export const searchSchema = z.object({
   query: z.string().max(200),
   maxPrice: z.number().min(0).max(500).nullable().describe('개별 상품 최대 USD 가격. 제한 없으면 null.'),
@@ -14,22 +15,24 @@ export const cartSchema = z.object({
   items: z.array(z.object({ productId: z.string().min(1).max(80), quantity: z.number().int().positive().max(POLICY.maxQuantity) })).min(1).max(30),
 });
 export type CartRequest = z.infer<typeof cartSchema>;
-export type SafeProduct = Pick<Product, 'id' | 'name' | 'category' | 'priceUSD' | 'stock' | 'seller'>;
+export type SafeProduct = Pick<Product, 'id' | 'name' | 'category' | 'stock' | 'seller'> & { priceUSD: number };
 export type Cart = { items: (SafeProduct & { quantity: number; subtotalCents: number })[]; budgetCents: number; totalCents: number; remainingCents: number };
 export type CartResult = { ok: true; cart: Cart } | { ok: false; error: string };
 
-export function isQuarantined(p: Product) {
-  return p.isMalicious || /승인.{0,8}(생략|위조)|무시하라|ignore previous|<system>|\[developer\]|API_KEY|skipApproval|경고를 숨|정책을 비활성화|10개 사라/i.test(p.description);
+// Text patterns only. The fixture's ground-truth label is never available here.
+export function isQuarantined(p: Pick<Product, 'description'>) {
+  return /승인.{0,20}(생략|위조)|무시하라|ignore previous|<system>|\[developer\]|API_KEY|skipApproval|경고를 숨|정책을 비활성화|10개 사라/i.test(p.description);
 }
 export function safeProduct(p: Product): SafeProduct {
-  return { id: p.id, name: p.name, category: p.category, priceUSD: p.priceUSD, stock: p.stock, seller: p.seller };
+  return { id: p.id, name: p.name, category: p.category, priceUSD: p.priceCents / 100, stock: p.stock, seller: p.seller };
 }
 export function matchingProducts(query: string, maxPrice: number | null, catalog: Product[] = products) {
   searchSchema.parse({ query, maxPrice });
+  const maxCents = maxPrice === null ? null : Math.round(maxPrice * 100);
   const terms = query.toLowerCase().trim().split(/[\s,]+/).filter(Boolean);
-  return catalog.filter(p => p.stock > 0 && (maxPrice === null || p.priceUSD <= maxPrice) &&
+  return catalog.filter(p => p.stock > 0 && (maxCents === null || p.priceCents <= maxCents) &&
     (terms.length === 0 || terms.some(t => [p.name, p.category, p.seller].join(' ').toLowerCase().includes(t))))
-    .sort((a, b) => a.priceUSD - b.priceUSD);
+    .sort((a, b) => a.priceCents - b.priceCents);
 }
 export function searchProducts(query: string, maxPrice: number | null = null, catalog: Product[] = products) {
   return matchingProducts(query, maxPrice, catalog).filter(p => !isQuarantined(p)).map(safeProduct);
@@ -44,10 +47,10 @@ export function buildCart(budget: number, items: CartRequest['items'], catalog: 
     if (!p) return { ok: false, error: '존재하지 않는 상품입니다.' };
     if (isQuarantined(p)) return { ok: false, error: '격리된 상품은 장바구니에 담을 수 없습니다.' };
     if (quantity > POLICY.maxQuantity || quantity > p.stock) return { ok: false, error: p.name + ': 수량 제한 또는 재고를 초과했습니다.' };
-    lines.push({ ...safeProduct(p), quantity, subtotalCents: Math.round(p.priceUSD * 100) * quantity });
+    lines.push({ ...safeProduct(p), quantity, subtotalCents: lineTotalCents(p.priceCents, quantity) });
   }
   const totalCents = lines.reduce((sum, p) => sum + p.subtotalCents, 0);
-  const budgetCents = Math.round(budget * 100);
+  const budgetCents = usdToCents(budget);
   if (totalCents > budgetCents) return { ok: false, error: '예산을 초과했습니다. 구성을 조정해 주세요.' };
   return { ok: true, cart: { items: lines, budgetCents, totalCents, remainingCents: budgetCents - totalCents } };
 }

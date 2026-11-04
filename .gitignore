@@ -8,3 +8,4 @@ next-env.d.ts
 prisma/*.db*
 *.db
 *.db-journal
+.paypal-smoke.json

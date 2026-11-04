@@ -7,6 +7,14 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model DemoSession {
+  id        String     @id
+  createdAt DateTime   @default(now())
+  expiresAt DateTime
+  approvals Approval[]
+}
+
+// Runtime catalog only. The fixture's isMalicious ground-truth label is deliberately not stored.
 model Product {
   id          String @id
   name        String
@@ -15,22 +23,28 @@ model Product {
   stock       Int
   seller      String
   description String
-  isMalicious Boolean @default(false)
 }
 
 model Approval {
-  id        String   @id @default(cuid())
-  cartJson  String
+  id         String      @id @default(cuid())
+  sessionId  String
+  session    DemoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  cartJson   String
   totalCents Int
-  status    String   @default("PENDING")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status     String      @default("PENDING")
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@index([sessionId])
 }
 
 model AuditLog {
   id        String   @id @default(cuid())
+  sessionId String?
   action    String
   outcome   String
   detail    String
   createdAt DateTime @default(now())
+
+  @@index([sessionId])
 }

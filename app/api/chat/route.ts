@@ -30,7 +30,9 @@ export async function POST(request: Request) {
       maxOutputTokens: 1800,
       abortSignal: request.signal,
     });
-    return createUIMessageStreamResponse({ stream: toUIMessageStream(result, {
+    return createUIMessageStreamResponse({ stream: toUIMessageStream({
+      stream: result.stream,
+      tools: shoppingTools,
       onError: () => 'AI 응답에 실패했습니다. API 키, 모델, 사용 한도와 DB 초기화를 확인해 주세요.',
     }) });
   } catch {

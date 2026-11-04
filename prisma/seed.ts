@@ -1,11 +1,9 @@
 import { PrismaClient } from '@prisma/client';
-import products from '../data/products.json';
+import { runtimeCatalog } from '../src/server/catalog';
 const db = new PrismaClient();
 async function main() {
-  await db.$transaction(products.map(({ priceUSD, ...product }) => {
-    const data = { ...product, priceCents: Math.round(priceUSD * 100) };
-    return db.product.upsert({ where: { id: product.id }, create: data, update: data });
-  }));
-  console.log(`Seeded ${products.length} products (${products.filter(p => p.isMalicious).length} malicious fixtures).`);
+  const products = runtimeCatalog();
+  await db.$transaction(products.map(product => db.product.upsert({ where: { id: product.id }, create: product, update: product })));
+  console.log(`Seeded ${products.length} products.`);
 }
-main().catch(() => { console.error('Seed failed. Check DATABASE_URL and run db:push first.'); process.exitCode = 1; }).finally(() => db.$disconnect());
+main().catch(() => { console.error('Seed failed. Check DATABASE_URL and run db:migrate first.'); process.exitCode = 1; }).finally(() => db.$disconnect());

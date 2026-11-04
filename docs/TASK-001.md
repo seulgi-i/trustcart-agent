@@ -1,9 +1,9 @@
 # Task 001 — 배포 가능한 뼈대와 PayPal 연결 가능성 검증
 
-상태: **READY FOR REVIEW / NOT AUTHORIZED TO IMPLEMENT YET**  
-선행 문서: [DESIGN.md](DESIGN.md), [DECISIONS.md](DECISIONS.md). Q1·배포 선택·sandbox 접근을 확인한 뒤 실행한다.
+상태: **IN PROGRESS — 2026-11-04 사용자가 구현을 승인(C-007). 코드 작성됨, 실행 검증 전.**  
+선행 문서: [DESIGN.md](DESIGN.md), [DECISIONS.md](DECISIONS.md). 배포 선택(Q2)·sandbox 접근(Q4)은 아직 미확인이며 해당 단계(7·8)는 BLOCKED.
 
-이 문서는 구현 지시서이며 이번 설계 검토에서 코드를 실행·작성하라는 뜻이 아니다. 현재 사용자는 코드 작성을 중단하라고 지시했다.
+진행 기록 (2026-11-04): 단계 2·5·6의 코드와 테스트를 작성했다. 작성 세션에서 node/npm 실행 권한이 없어 설치·lockfile·typecheck·테스트는 **미실행**이다. 단계 3·7·8·9는 사용자 계정/환경이 필요해 미실행. 상세는 [SECURITY.md](SECURITY.md) 단계 1 기록.
 
 ## 목표
 

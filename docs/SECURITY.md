@@ -46,6 +46,18 @@
 - 남은 위험·미검증·차단 사유.
 - 단계 판정: PASS / FAIL / BLOCKED. 보고자가 근거 없이 PASS를 쓰지 않는다.
 
+## 단계 1 기록 — 2026-11-04
+
+- 대상: TASK-001 변경분(작업 트리, 커밋 전). 기준 commit 42ff66e.
+- 실행 환경: 작성 세션에서 node/npm 명령이 권한 승인 단계에서 차단됨. 의존성 설치·typecheck·테스트·앱 기동을 **실행하지 못했다**.
+- Cloudflare security-audit: **NOT RUN** (설치·격리 환경 없음).
+- 작성한 경계/테스트(미실행): catalog_schema_and_labels, runtime_catalog_hides_ground_truth, money_is_integer_cents, session_ownership, paypal_payload_binding, same_operation_same_request_id, payment_completion_uses_capture_status, sandbox_only.
+- 설계상 조치: Product 테이블·runtime DTO·스캐너에서 isMalicious 제거, 평가 라벨은 src/eval/ground-truth.ts로 분리. 승인 API에 서버 발급 세션과 소유권 필터 적용(타 세션 ID는 404). PayPal host 고정·live 설정 거부·클라이언트 금액/payee 무시·재시도 시 동일 PayPal-Request-Id·capture COMPLETED+금액/통화/payee/reference 일치만 PAID.
+- 발견(미수정, 단계 4 대상): 악성 fixture가 `risk-` ID 접두사와 `Fixture Market` seller를 공유해 LLM·스캐너 입력에서 사실상 정답이 노출된다. 평가 무결성에 영향.
+- 발견(미수정): /api/chat에 세션·요청 한도 없음. Origin 헤더가 없는 요청은 checkOrigin을 통과(SameSite=Lax 쿠키에 의존).
+- 마이그레이션 SQL은 수작업 작성. `prisma migrate dev`로 schema와 drift 없음을 확인해야 한다.
+- 단계 판정: **BLOCKED** — 실행 검증·지정 감사·sandbox capture·배포 확인 없음.
+
 ## graphify 대조 기준
 
 단계 4/5에서 AST 기반 import/call 근거를 우선한다. 의미적 추론 edge를 확정 의존성으로 취급하지 않는다. 보조 리소스나 secret 파일을 그래프 생성/외부 분석에 포함하지 않는다.
