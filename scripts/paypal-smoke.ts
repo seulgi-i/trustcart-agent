@@ -11,7 +11,7 @@ import { approvalLink, createPayPalClient, interpretCapture, loadPayPalConfig, P
 
 const STATE_FILE = '.paypal-smoke.json';
 const FIXTURE = { productId: 'camp-06', quantity: 1 };
-type State = { order: CheckoutOrder; createRequestId: string; captureRequestId: string; orderId?: string };
+type State = { order: CheckoutOrder; orderId?: string };
 
 const save = (state: State) => writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 const load = (): State => {
@@ -26,12 +26,13 @@ async function main() {
   const command = process.argv[2];
 
   if (command === 'create') {
-    // Request IDs are persisted before the first call so a rerun after a timeout reuses them.
+    // The order (and so its reference ID) is persisted before the first call so a rerun after a timeout
+    // derives the same PayPal-Request-Id.
     const previous = existsSync(STATE_FILE) ? load() : null;
     const state: State = previous && !previous.orderId ? previous
-      : { order: priceCheckout(FIXTURE, runtimeCatalog(), `smoke-${randomUUID()}`), createRequestId: randomUUID(), captureRequestId: randomUUID() };
+      : { order: priceCheckout(FIXTURE, runtimeCatalog(), `smoke-${randomUUID()}`) };
     save(state);
-    const created = await paypal.createOrder(state.order, { returnUrl: 'http://localhost:3000/?paypal=return', cancelUrl: 'http://localhost:3000/?paypal=cancel' }, state.createRequestId);
+    const created = await paypal.createOrder(state.order, { returnUrl: 'http://localhost:3000/?paypal=return', cancelUrl: 'http://localhost:3000/?paypal=cancel' });
     const orderId = (created as { id?: string }).id;
     if (!orderId) throw new Error('PayPal did not return an order ID.');
     save({ ...state, orderId });
@@ -49,7 +50,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    const captured = current.status === 'COMPLETED' ? current : await paypal.captureOrder(state.orderId, state.captureRequestId);
+    const captured = current.status === 'COMPLETED' ? current : await paypal.captureOrder(state.orderId);
     const result = interpretCapture(captured, { referenceId: state.order.referenceId, totalCents: state.order.totalCents, merchantId: config.merchantId });
     if (result.paid) {
       console.log(`PAID amount=${formatUsd(result.amountCents)} USD captureStatus=COMPLETED captureId=${result.captureId}`);

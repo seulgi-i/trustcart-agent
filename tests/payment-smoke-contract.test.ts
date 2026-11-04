@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runtimeCatalog } from '../src/server/catalog';
-import { createPayPalClient, interpretCapture, loadPayPalConfig, PAYPAL_SANDBOX_API, PayPalError, priceCheckout } from '../src/server/payments/paypal';
+import { createPayPalClient, interpretCapture, loadPayPalConfig, PAYPAL_SANDBOX_API, PayPalError, paypalRequestId, priceCheckout, type PayPalConfig } from '../src/server/payments/paypal';
+import { createMockProvider } from '../src/server/payments/provider';
 
 const env = { PAYPAL_CLIENT_ID: 'test-client', PAYPAL_CLIENT_SECRET: 'test-secret', PAYPAL_SANDBOX_MERCHANT_ID: 'SANDBOXMERCHANT1' };
 const config = loadPayPalConfig(env);
@@ -33,7 +34,7 @@ test('paypal_payload_binding', async () => {
   const tampered = priceCheckout({ productId: 'camp-06', quantity: 3, amount: '0.01', currency: 'EUR', seller: 'attacker', payee: { merchant_id: 'EVIL' } }, runtimeCatalog(), 'ref-1');
   assert.deepEqual(tampered, order);
   const { calls, fetchImpl } = fakeFetch([() => Response.json({ id: 'ORDER1', status: 'PAYER_ACTION_REQUIRED' })]);
-  await createPayPalClient(config, fetchImpl).createOrder(tampered, urls, 'req-1');
+  await createPayPalClient(config, fetchImpl).createOrder(tampered, urls);
   const body = JSON.parse(String(calls[0].init.body));
   assert.equal(body.intent, 'CAPTURE');
   assert.equal(body.purchase_units.length, 1);
@@ -45,14 +46,41 @@ test('paypal_payload_binding', async () => {
 
 test('same_operation_same_request_id', async () => {
   const { calls, fetchImpl } = fakeFetch([networkError, () => new Response(null, { status: 503 }), () => Response.json(captured())]);
-  await createPayPalClient(config, fetchImpl).captureOrder('ORDER1', 'capture-req-1');
+  await createPayPalClient(config, fetchImpl).captureOrder('ORDER1');
   assert.equal(calls.length, 3);
-  assert.ok(calls.every(c => header(c, 'PayPal-Request-Id') === 'capture-req-1'));
+  assert.ok(calls.every(c => header(c, 'PayPal-Request-Id') === paypalRequestId('capture', 'ORDER1')));
 
   const failing = fakeFetch([networkError, networkError, networkError]);
-  await assert.rejects(createPayPalClient(config, failing.fetchImpl).captureOrder('ORDER1', 'capture-req-2'),
+  await assert.rejects(createPayPalClient(config, failing.fetchImpl).captureOrder('ORDER1'),
     (error: unknown) => error instanceof PayPalError && error.outcomeUnknown);
-  assert.ok(failing.calls.every(c => header(c, 'PayPal-Request-Id') === 'capture-req-2'));
+  assert.ok(failing.calls.every(c => header(c, 'PayPal-Request-Id') === paypalRequestId('capture', 'ORDER1')));
+});
+
+test('create_retry_reuses_request_id', async () => {
+  const { calls, fetchImpl } = fakeFetch([networkError, () => new Response(null, { status: 503 }), () => Response.json({ id: 'ORDER1', status: 'CREATED' })]);
+  await createPayPalClient(config, fetchImpl).createOrder(order, urls);
+  // A fresh client (e.g. a rerun after a crash) for the same order derives the same ID too.
+  const rerun = fakeFetch([() => Response.json({ id: 'ORDER1', status: 'CREATED' })]);
+  await createPayPalClient(config, rerun.fetchImpl).createOrder(order, urls);
+  const ids = [...calls, ...rerun.calls].map(c => header(c, 'PayPal-Request-Id'));
+  assert.equal(ids.length, 4);
+  assert.ok(ids.every(id => id === ids[0] && /^trustcart-[0-9a-f]{64}$/.test(id)));
+});
+
+test('request_ids_distinct_per_operation_and_order', async () => {
+  const { calls, fetchImpl } = fakeFetch([
+    () => Response.json({ id: 'ORDER1' }), () => Response.json({ id: 'ORDER2' }),
+    () => Response.json(captured()), () => Response.json(captured()),
+  ]);
+  const client = createPayPalClient(config, fetchImpl);
+  await client.createOrder(order, urls);
+  await client.createOrder(priceCheckout({ productId: 'camp-06', quantity: 3 }, runtimeCatalog(), 'ref-2'), urls);
+  await client.captureOrder('ORDER1');
+  await client.captureOrder('ORDER2');
+  const ids = calls.map(c => header(c, 'PayPal-Request-Id'));
+  assert.equal(new Set(ids).size, 4);
+  // Same key string, different operation: still distinct.
+  assert.notEqual(paypalRequestId('create', 'X'), paypalRequestId('capture', 'X'));
 });
 
 test('payment_completion_uses_capture_status', () => {
@@ -74,4 +102,20 @@ test('sandbox_only', async () => {
   await createPayPalClient(config, fetchImpl).getOrder('ORDER1');
   assert.ok(calls.every(c => c.url.startsWith(`${PAYPAL_SANDBOX_API}/`)));
   assert.throws(() => createPayPalClient(config, fetchImpl).getOrder('../../v1/evil'));
+
+  let fetched = false;
+  const forged = { ...config, apiBase: 'https://api-m.paypal.com' } as unknown as PayPalConfig;
+  assert.throws(() => createPayPalClient(forged, async () => { fetched = true; return Response.json({}); }));
+  assert.equal(fetched, false);
+});
+
+test('mock_provider_is_labeled', async () => {
+  const mock = createMockProvider();
+  assert.equal(mock.kind, 'mock');
+  const created = await mock.createOrder(order, urls) as { id: string; mock: boolean };
+  assert.match(created.id, /^MOCK-/);
+  assert.equal(created.mock, true);
+  const capture = await mock.captureOrder(created.id) as { capture_id: string };
+  assert.match(capture.capture_id, /^MOCK-/);
+  assert.equal(interpretCapture(capture, expected).paid, false);
 });

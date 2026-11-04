@@ -87,3 +87,26 @@
 - P1 authorize/void 채택 시 capture와 void 동시 요청 중 한쪽만 실행.
 - P1 hash chain 채택 시 이벤트 수정 탐지와 전체 체인 재작성 한계를 별도 표시.
 
+
+## Stage-1 audit results (2026-11-04, KST, orchestrated by Grok Bot)
+
+Tools: Claude Code 2.1.299 (implementer), codex-cli 0.155.1 (reviewer, read-only sandbox), local runs on Windows/Node 24.21.0.
+
+| Check | Tool | Result |
+|---|---|---|
+| `npx.cmd tsc --noEmit` | local | PASS (exit 0, 17:42 KST) |
+| `npm.cmd test` (17 tests, mocked fetch, throwaway prisma/test.db) | local | PASS (exit 0, 17/17) |
+| `npm.cmd run build` | local | PASS (exit 0) |
+| Secret leakage (client bundle / logs / errors) | codex review | PASS (no NEXT_PUBLIC secret path; errors sanitized). Bundle not scanned by tool -> partial |
+| Session ownership (approvals) | codex + tests | PASS |
+| Chat route unauthenticated (quota abuse) | codex r1 | FIXED: origin check + session required (401/403), tested |
+| Client-supplied amount/seller | codex + tests | PASS (server catalog price, fixed USD/merchant) |
+| Live host config | codex r1 | FIXED: createPayPalClient rejects non-sandbox apiBase, tested |
+| PayPal-Request-Id reuse/collision | codex r1 | FIXED: derived from (operation,key) hash; retry reuse + distinctness tested |
+| PAID only on capture COMPLETED | tests | PASS for interpretCapture; no PAID persistence path yet -> UNVERIFIED end-to-end |
+| Real sandbox capture (TASK-001 step 7) | - | UNVERIFIED (PayPal account access pending) |
+| Deploy / DB persistence (step 8) | - | UNVERIFIED |
+| Cloudflare security-audit (step 9) | - | NOT RUN |
+| npm audit: 4 high | npm | OPEN, not triaged |
+
+Deferred (codex r2, non-blocking): MockProvider not idempotent (mock only); no positive chat test with explicit allowed Origin. Known design issue: malicious fixtures share `risk-` id prefix / seller (Day-4).

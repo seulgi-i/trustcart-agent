@@ -2,9 +2,18 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { convertToModelMessages, createUIMessageStreamResponse, isStepCount, streamText, toUIMessageStream, validateUIMessages } from 'ai';
 import { shoppingTools } from '@/lib/agent';
+import { db } from '@/lib/db';
+import { checkOrigin } from '@/lib/http';
+import { findSession } from '@/src/server/session';
 export const maxDuration = 60;
 export const runtime = 'nodejs';
 export async function POST(request: Request) {
+  if (!checkOrigin(request)) return Response.json({ error: '허용되지 않은 출처입니다.' }, { status: 403 });
+  try {
+    if (!await findSession(db, request)) return Response.json({ error: 'Demo session required.' }, { status: 401 });
+  } catch {
+    return Response.json({ error: '세션을 확인하지 못했습니다. DB 설정을 확인해 주세요.' }, { status: 500 });
+  }
   let messages;
   try {
     const raw = await request.text();

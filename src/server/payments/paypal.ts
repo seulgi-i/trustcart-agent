@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { centsToUsdString, lineTotalCents, usdStringToCents } from '@/src/domain/money';
 import type { RuntimeProduct } from '@/src/server/catalog';
+import type { PaymentProvider } from '@/src/server/payments/provider';
 
 // Server-only thin REST adapter for PayPal Orders v2, CAPTURE intent. The demo never talks to the live API.
 export const PAYPAL_SANDBOX_API = 'https://api-m.sandbox.paypal.com';
@@ -55,7 +57,13 @@ export class PayPalError extends Error {
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 const PAYPAL_ID = /^[A-Z0-9]{1,36}$/;
 
-export function createPayPalClient(config: PayPalConfig, fetchImpl: FetchLike = fetch, maxAttempts = 3) {
+// Derived, never caller-supplied: a retry of one operation on one order reuses the ID, anything else gets a distinct one.
+export function paypalRequestId(operation: 'create' | 'capture', key: string) {
+  return `trustcart-${createHash('sha256').update(`${operation}\0${key}`).digest('hex')}`;
+}
+
+export function createPayPalClient(config: PayPalConfig, fetchImpl: FetchLike = fetch, maxAttempts = 3): PaymentProvider {
+  if (config.apiBase !== PAYPAL_SANDBOX_API) throw new Error('Only the PayPal sandbox API is allowed in this demo.');
   let token: { value: string; expiresAt: number } | null = null;
 
   async function accessToken() {
@@ -105,10 +113,11 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: FetchLike = 
   };
 
   return {
-    createOrder: (order: CheckoutOrder, urls: { returnUrl: string; cancelUrl: string }, requestId: string) =>
-      send('POST', '/v2/checkout/orders', requestId, createOrderBody(order, config, urls)),
-    getOrder: (orderId: string) => send('GET', orderPath(orderId)),
-    captureOrder: (orderId: string, requestId: string) => send('POST', `${orderPath(orderId)}/capture`, requestId, {}),
+    kind: 'paypal-sandbox',
+    createOrder: (order, urls) =>
+      send('POST', '/v2/checkout/orders', paypalRequestId('create', order.referenceId), createOrderBody(order, config, urls)),
+    getOrder: orderId => send('GET', orderPath(orderId)),
+    captureOrder: orderId => send('POST', `${orderPath(orderId)}/capture`, paypalRequestId('capture', orderId), {}),
   };
 }
 
