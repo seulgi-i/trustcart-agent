@@ -1,10 +1,15 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../lib/db';
+import { createShoppingTools } from '../lib/agent';
 import { runtimeCatalog } from '../src/server/catalog';
 import { createSession, readSessionId, SESSION_COOKIE, sessionCookie } from '../src/server/session';
-import { POST as requestApproval } from '../app/api/approvals/route';
-import { PATCH as reviewApproval } from '../app/api/approvals/[id]/route';
+import { decideOrder, saveCart, setIntent, submitCart } from '../src/server/orders';
+import { createMockProvider, type PaymentProvider } from '../src/server/payments/provider';
+import type { CartLine } from '../src/domain/policy';
+import { GET as inbox } from '../app/api/approvals/route';
+import { PATCH as reviewOrder } from '../app/api/approvals/[id]/route';
+import { POST as postIntent } from '../app/api/intent/route';
 import { POST as chat } from '../app/api/chat/route';
 
 // Requires the throwaway DB prepared by scripts/test.ts (npm test).
@@ -14,13 +19,23 @@ before(async () => {
 after(() => db.$disconnect());
 
 const cookie = (id: string) => `${SESSION_COOKIE}=${id}`;
-const post = (sessionCookie?: string) => requestApproval(new Request('http://localhost/api/approvals', {
-  method: 'POST', headers: { 'content-type': 'application/json', ...(sessionCookie ? { cookie: sessionCookie } : {}) },
-  body: JSON.stringify({ budget: 50, items: [{ productId: 'camp-06', quantity: 1 }] }),
-}));
-const patch = (id: string, sessionCookie: string, status: string) => reviewApproval(new Request(`http://localhost/api/approvals/${id}`, {
-  method: 'PATCH', headers: { 'content-type': 'application/json', cookie: sessionCookie }, body: JSON.stringify({ status }),
+const patch = (id: string, sessionId: string, status: string) => reviewOrder(new Request(`http://localhost/api/approvals/${id}`, {
+  method: 'PATCH', headers: { 'content-type': 'application/json', cookie: cookie(sessionId) }, body: JSON.stringify({ status }),
 }), { params: Promise.resolve({ id }) });
+const urls = { returnUrl: 'http://localhost/approvals', cancelUrl: 'http://localhost/approvals' };
+// A provider that fails the test if anything tries to create or capture a payment.
+const noPayments: PaymentProvider = { kind: 'mock', merchantId: 'X', createOrder: () => assert.fail('createOrder called'), getOrder: () => assert.fail('getOrder called'), captureOrder: () => assert.fail('captureOrder called') };
+
+async function sessionWithOrder(cart: CartLine[]) {
+  const session = await createSession(db);
+  await setIntent(db, session.id, { budgetCents: 4000, category: '캠핑', quantity: 2 });
+  await saveCart(db, session.id, cart);
+  const submitted = await submitCart(db, session.id);
+  assert.ok(submitted.ok);
+  return { sessionId: session.id, orderId: submitted.orderId, status: submitted.status };
+}
+type ToolLike = { execute?: (input: never, options: never) => unknown };
+const run = async (t: ToolLike, input: unknown) => await (t.execute!(input as never, { toolCallId: 't', messages: [] } as never)) as { ok: boolean; error?: string; status?: string };
 
 test('session cookie is server-issued, HttpOnly and strictly parsed', () => {
   const header = sessionCookie('a'.repeat(43), true);
@@ -32,23 +47,90 @@ test('session cookie is server-issued, HttpOnly and strictly parsed', () => {
   assert.equal(readSessionId(null), null);
 });
 
-test('session_ownership', async () => {
-  const [a, b] = [await createSession(db), await createSession(db)];
-  assert.equal((await post()).status, 401);
-  const created = await post(cookie(b.id));
-  assert.equal(created.status, 201);
-  const { id } = await created.json() as { id: string };
+test('intent is set by the user route, validated against the hard cap', async () => {
+  const session = await createSession(db);
+  const send = (body: unknown, headers: Record<string, string> = { cookie: cookie(session.id) }) =>
+    postIntent(new Request('http://localhost/api/intent', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }));
+  assert.equal((await send({ budgetUSD: 40, category: '캠핑', quantity: 2 }, {})).status, 401);
+  assert.equal((await send({ budgetUSD: 40, category: '캠핑', quantity: 2 }, { cookie: cookie(session.id), origin: 'https://evil.example' })).status, 403);
+  assert.equal((await send({ budgetUSD: 9999, category: '캠핑', quantity: 2 })).status, 400);
+  assert.equal((await send({ budgetUSD: 40, category: '캠핑', quantity: -1 })).status, 400);
+  assert.equal((await send({ budgetUSD: 40, category: 'weapons', quantity: 2 })).status, 400);
+  assert.equal((await send({ budgetUSD: 40, category: '캠핑', quantity: 2 })).status, 201);
+  assert.deepEqual(await db.intent.findFirst({ where: { sessionId: session.id }, select: { budgetCents: true, category: true, quantity: true } }), { budgetCents: 4000, category: '캠핑', quantity: 2 });
+});
 
-  for (const status of ['APPROVED', 'REJECTED']) assert.equal((await patch(id, cookie(a.id), status)).status, 404);
-  assert.equal((await db.approval.findUniqueOrThrow({ where: { id } })).status, 'PENDING');
+test('same turn: reading untrusted content blocks checkout, a new turn may check out', async () => {
+  const session = await createSession(db);
+  await setIntent(db, session.id, { budgetCents: 4000, category: '캠핑', quantity: 2 });
 
-  assert.equal((await patch(id, cookie(b.id), 'APPROVED')).status, 200);
-  assert.equal((await db.approval.findUniqueOrThrow({ where: { id } })).status, 'APPROVED');
+  const turn1 = createShoppingTools(session.id);
+  assert.equal((await run(turn1.searchProducts, { query: '랜턴', maxPrice: null })).ok, true);
+  assert.equal((await run(turn1.buildCart, { items: [{ productId: 'camp-06', quantity: 2 }] })).ok, true);
+  const blocked = await run(turn1.checkout, {});
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error!, /untrusted/);
+  assert.equal(await db.order.count({ where: { sessionId: session.id } }), 0);
+
+  // Checkout first, then a search in the same turn: the search is refused instead.
+  const turn2 = createShoppingTools(session.id);
+  const submitted = await run(turn2.checkout, {});
+  assert.equal(submitted.ok, true);
+  assert.equal(submitted.status, 'READY');
+  assert.equal((await run(turn2.searchProducts, { query: '', maxPrice: null })).ok, false);
+});
+
+test('D-DEMO: injected cart -> NEEDS_APPROVAL -> badge -> reject -> no capture', async () => {
+  const { sessionId, orderId, status } = await sessionWithOrder([{ productId: 'camp-03', quantity: 10 }]);
+  assert.equal(status, 'NEEDS_APPROVAL');
+
+  const listed = await (await inbox(new Request('http://localhost/api/approvals', { headers: { cookie: cookie(sessionId) } }))).json() as { needsReview: number; orders: { id: string; evaluation: { reasons: { rule: string }[]; scan: unknown[] } }[] };
+  assert.equal(listed.needsReview, 1);
+  assert.deepEqual(listed.orders[0].evaluation.reasons.map(r => r.rule), ['intent-budget', 'intent-quantity', 'injection-scanner']);
+  assert.equal(listed.orders[0].evaluation.scan.length, 1);
+
+  // Another visitor cannot see or decide it.
+  const other = await createSession(db);
+  assert.equal((await patch(orderId, other.id, 'REJECTED')).status, 404);
+
+  assert.equal((await decideOrder(db, noPayments, sessionId, orderId, 'REJECTED', urls)).status, 200);
+  const row = await db.order.findUniqueOrThrow({ where: { id: orderId } });
+  assert.equal(row.status, 'REJECTED');
+  assert.equal(row.providerOrderId, null);
+  assert.equal(row.captureId, null);
+  assert.equal((await patch(orderId, sessionId, 'APPROVED')).status, 409);
+});
+
+test('approve pays through the mock provider, PAID only on capture COMPLETED', async () => {
+  const paid = await sessionWithOrder([{ productId: 'camp-03', quantity: 2 }]);
+  assert.equal(paid.status, 'NEEDS_APPROVAL');
+  const res = await patch(paid.orderId, paid.sessionId, 'APPROVED');
+  assert.equal(res.status, 200);
+  assert.equal((await res.json() as { provider: string }).provider, 'mock');
+  const row = await db.order.findUniqueOrThrow({ where: { id: paid.orderId } });
+  assert.equal(row.status, 'PAID');
+  assert.equal(row.provider, 'mock');
+  assert.match(row.captureId!, /^MOCK-/);
+
+  const pending = await sessionWithOrder([{ productId: 'camp-06', quantity: 2 }]);
+  assert.equal(pending.status, 'READY');
+  await decideOrder(db, createMockProvider({ captureStatus: 'PENDING' }), pending.sessionId, pending.orderId, 'APPROVED', urls);
+  const notPaid = await db.order.findUniqueOrThrow({ where: { id: pending.orderId } });
+  assert.equal(notPaid.status, 'FAILED');
+  assert.equal(notPaid.captureId, null);
+});
+
+test('DENY cannot be approved', async () => {
+  const { sessionId, orderId, status } = await sessionWithOrder([{ productId: 'home-09', quantity: 1 }]);
+  assert.equal(status, 'DENIED');
+  assert.equal((await patch(orderId, sessionId, 'APPROVED')).status, 409);
+  assert.equal((await decideOrder(db, noPayments, sessionId, orderId, 'APPROVED', urls)).status, 409);
+  assert.equal((await db.order.findUniqueOrThrow({ where: { id: orderId } })).status, 'DENIED');
 });
 
 test('expired sessions are rejected', async () => {
   const expired = await createSession(db, new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
-  assert.equal((await post(cookie(expired.id))).status, 401);
+  assert.equal((await inbox(new Request('http://localhost/api/approvals', { headers: { cookie: cookie(expired.id) } }))).status, 401);
 });
 
 test('chat requires a same-origin request with a valid session', async () => {

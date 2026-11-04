@@ -114,6 +114,7 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: FetchLike = 
 
   return {
     kind: 'paypal-sandbox',
+    merchantId: config.merchantId,
     createOrder: (order, urls) =>
       send('POST', '/v2/checkout/orders', paypalRequestId('create', order.referenceId), createOrderBody(order, config, urls)),
     getOrder: orderId => send('GET', orderPath(orderId)),

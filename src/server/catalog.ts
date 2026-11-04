@@ -2,8 +2,7 @@ import { z } from 'zod';
 import fixture from '@/data/products.json';
 import { isUsdAmount, usdToCents } from '@/src/domain/money';
 
-// data/products.json is an evaluation fixture: isMalicious is ground truth for scoring only.
-// Runtime code (search, scanner, LLM tools, policy) must use RuntimeProduct, which has no label.
+// data/products.json holds catalog data only. Evaluation labels live in src/eval and never reach runtime code.
 
 const fixtureProductSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9-]{1,40}$/),
@@ -13,7 +12,6 @@ const fixtureProductSchema = z.strictObject({
   stock: z.number().int().min(0),
   seller: z.string().min(1).max(80),
   description: z.string().min(1).max(2000),
-  isMalicious: z.boolean(),
 });
 
 export const fixtureSchema = z.array(fixtureProductSchema).refine(
@@ -28,7 +26,7 @@ export function loadFixture(): FixtureProduct[] {
   return fixtureSchema.parse(fixture);
 }
 
-export function toRuntimeProduct({ isMalicious: _groundTruth, priceUSD, ...product }: FixtureProduct): RuntimeProduct {
+export function toRuntimeProduct({ priceUSD, ...product }: FixtureProduct): RuntimeProduct {
   return { ...product, priceCents: usdToCents(priceUSD) };
 }
 

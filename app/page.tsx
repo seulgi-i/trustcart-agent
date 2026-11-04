@@ -1,6 +1,8 @@
 import { db } from '@/lib/db';
 import { formatUsd } from '@/src/domain/money';
 import { SessionStatus } from './session-status';
+import { IntentForm } from './intent-form';
+import { Chat } from './chat';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +13,7 @@ export default async function Home() {
     <main className="mx-auto max-w-4xl px-4 py-8">
       <h1 className="text-2xl font-semibold">TrustCart Agent</h1>
       <p className="mt-1 text-stone-600">AI chooses. Your rules authorize.</p>
-      <SessionStatus />
+      <SessionStatus><IntentForm /><Chat /></SessionStatus>
       <h2 className="mt-8 text-lg font-medium">Catalog</h2>
       {products === null ? (
         <p className="mt-2 text-red-700">The database is not ready. Run <code>npm run db:setup</code> and restart.</p>

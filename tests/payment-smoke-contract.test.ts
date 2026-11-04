@@ -115,7 +115,13 @@ test('mock_provider_is_labeled', async () => {
   const created = await mock.createOrder(order, urls) as { id: string; mock: boolean };
   assert.match(created.id, /^MOCK-/);
   assert.equal(created.mock, true);
-  const capture = await mock.captureOrder(created.id) as { capture_id: string };
-  assert.match(capture.capture_id, /^MOCK-/);
+  const capture = await mock.captureOrder(created.id) as { mock: boolean };
+  assert.equal(capture.mock, true);
+  // A mock capture can never pass as a capture for the real sandbox merchant.
   assert.equal(interpretCapture(capture, expected).paid, false);
+  const result = interpretCapture(capture, { ...expected, merchantId: mock.merchantId });
+  assert.ok(result.paid && result.captureId.startsWith('MOCK-'));
+  const pending = createMockProvider({ captureStatus: 'PENDING' });
+  const pendingOrder = await pending.createOrder(order, urls) as { id: string };
+  assert.equal(interpretCapture(await pending.captureOrder(pendingOrder.id), { ...expected, merchantId: pending.merchantId }).paid, false);
 });

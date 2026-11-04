@@ -8,13 +8,30 @@ datasource db {
 }
 
 model DemoSession {
-  id        String     @id
-  createdAt DateTime   @default(now())
+  id        String   @id
+  createdAt DateTime @default(now())
   expiresAt DateTime
-  approvals Approval[]
+  // The agent's current proposal (JSON CartLine[]). Checkout evaluates this server copy, never model-supplied arguments.
+  cartJson  String   @default("[]")
+  intents   Intent[]
+  orders    Order[]
 }
 
-// Runtime catalog only. The fixture's isMalicious ground-truth label is deliberately not stored.
+// Purchase intent set by the user through the UI, never by the model. A change is a new row; the latest one applies.
+model Intent {
+  id          String      @id @default(cuid())
+  sessionId   String
+  session     DemoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  budgetCents Int
+  category    String
+  quantity    Int
+  createdAt   DateTime    @default(now())
+  orders      Order[]
+
+  @@index([sessionId])
+}
+
+// Runtime catalog only. Evaluation labels live in src/eval and are deliberately not stored.
 model Product {
   id          String @id
   name        String
@@ -25,15 +42,22 @@ model Product {
   description String
 }
 
-model Approval {
-  id         String      @id @default(cuid())
-  sessionId  String
-  session    DemoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  cartJson   String
-  totalCents Int
-  status     String      @default("PENDING")
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+// status: READY | NEEDS_APPROVAL | DENIED -> CAPTURE_PENDING -> PAID | FAILED, or REJECTED. DENIED is terminal.
+model Order {
+  id              String      @id @default(cuid())
+  sessionId       String
+  session         DemoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  intentId        String
+  intent          Intent      @relation(fields: [intentId], references: [id])
+  status          String
+  cartJson        String
+  totalCents      Int
+  evaluationJson  String
+  provider        String?
+  providerOrderId String?
+  captureId       String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   @@index([sessionId])
 }
