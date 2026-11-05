@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model DemoSession {
@@ -74,4 +75,14 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([sessionId])
+}
+
+// Fixed-window counter for /api/chat. One row per (key, window start); the count is incremented atomically.
+model RateLimit {
+  key         String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@id([key, windowStart])
+  @@index([windowStart])
 }

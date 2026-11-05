@@ -88,12 +88,13 @@ export async function decideOrder(db: PrismaClient, provider: PaymentProvider, s
   // Re-check against the current catalog right before money moves. A cart that is now DENY or repriced is not paid.
   const recheck = evaluateCart(order.intent, JSON.parse(order.cartJson) as CartLine[], await db.product.findMany());
   if (recheck.decision === 'DENY' || recheck.totalCents !== order.totalCents) return { status: 409, body: { error: 'The catalog changed since this cart was proposed. Ask the agent for a new cart.' } };
+  // Built before the claim: a missing APP_BASE_URL must fail here, not leave the order stuck in PAYMENT_CREATING.
+  const urls = checkoutUrls(id);
   if (!(await claim('PAYMENT_CREATING')).count) return { status: 409, body: { error: 'This order was already decided.' } };
   await audit(db, sessionId, 'humanReview', 'APPROVED', { orderId: id, provider: provider.kind });
 
   // Amount comes only from the catalog re-check (unit price x quantity per line), never from the client.
   const checkout: CheckoutOrder = { referenceId: order.id, currency: 'USD', unitCents: recheck.totalCents, quantity: 1, name: `TrustCart order ${order.id}`, totalCents: recheck.totalCents };
-  const urls = checkoutUrls(id);
   let created: { providerOrderId: string; approvalUrl: string } | { reason: string };
   try {
     const response = await provider.createOrder(checkout, urls);

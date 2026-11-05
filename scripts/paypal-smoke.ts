@@ -8,6 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { formatUsd } from '@/src/domain/money';
 import { runtimeCatalog } from '@/src/server/catalog';
 import { approvalLink, createPayPalClient, interpretCapture, loadPayPalConfig, PayPalError, priceCheckout, type CheckoutOrder } from '@/src/server/payments/paypal';
+import { appOrigin } from '@/src/server/payments/provider';
 
 const STATE_FILE = '.paypal-smoke.json';
 const FIXTURE = { productId: 'camp-06', quantity: 1 };
@@ -32,7 +33,8 @@ async function main() {
     const state: State = previous && !previous.orderId ? previous
       : { order: priceCheckout(FIXTURE, runtimeCatalog(), `smoke-${randomUUID()}`) };
     save(state);
-    const created = await paypal.createOrder(state.order, { returnUrl: 'http://localhost:3000/?paypal=return', cancelUrl: 'http://localhost:3000/?paypal=cancel' });
+    const origin = appOrigin();
+    const created = await paypal.createOrder(state.order, { returnUrl: `${origin}/?paypal=return`, cancelUrl: `${origin}/?paypal=cancel` });
     const orderId = (created as { id?: string }).id;
     if (!orderId) throw new Error('PayPal did not return an order ID.');
     save({ ...state, orderId });

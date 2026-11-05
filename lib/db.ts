@@ -1,7 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import type { RuntimeProduct } from '@/src/server/catalog';
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-export const db = globalForPrisma.prisma ?? new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL || 'file:./dev.db' } } });
+// Connects lazily on the first query, so importing this (e.g. during `next build`) needs no live database.
+export const db = globalForPrisma.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
 export async function catalog(): Promise<RuntimeProduct[]> {
   return db.product.findMany();

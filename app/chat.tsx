@@ -14,6 +14,15 @@ function toolSummary(type: string, output: unknown) {
   return '';
 }
 
+// Non-2xx responses from /api/chat (429 rate limit, 503 ...) arrive as their JSON body; show only its message.
+function errorText(error: Error) {
+  try {
+    const body = JSON.parse(error.message) as { error?: unknown };
+    if (typeof body.error === 'string') return body.error;
+  } catch {}
+  return error.message || 'AI 요청에 실패했습니다.';
+}
+
 export function Chat() {
   const { messages, sendMessage, status, error } = useChat<ShoppingMessage>();
   const [input, setInput] = useState('');
@@ -33,7 +42,7 @@ export function Chat() {
           </div>
         ))}
         {(status === 'submitted' || status === 'streaming') && <p className="text-xs text-stone-500">Agent is thinking...</p>}
-        {error && <p className="text-red-700">AI error: {error.message || 'request failed'}</p>}
+        {error && <p className="text-red-700">{errorText(error)}</p>}
       </div>
       <form className="mt-2 flex gap-2" onSubmit={e => { e.preventDefault(); if (input.trim()) { sendMessage({ text: input }); setInput(''); } }}>
         <input className="flex-1 border px-2 py-1" value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. 캠핑 랜턴 2개 골라줘 / 주문해줘" disabled={status !== 'ready'} />

@@ -1,5 +1,8 @@
+import { existsSync } from 'node:fs';
 import { PrismaClient } from '@prisma/client';
 import { runtimeCatalog } from '../src/server/catalog';
+// tsx does not read .env; values already in the environment (e.g. CI or Vercel) win over the file.
+if (existsSync('.env')) process.loadEnvFile('.env');
 const db = new PrismaClient();
 async function main() {
   const products = runtimeCatalog();

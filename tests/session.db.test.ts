@@ -215,3 +215,16 @@ test('chat requires a same-origin request with a valid session', async () => {
   // A valid session gets past the gate to input validation.
   assert.equal((await send({ cookie: cookie(session.id) })).status, 400);
 });
+
+test('chat is rate limited per session with a Korean 429 before any model call', async () => {
+  const session = await createSession(db);
+  const ip = `198.51.100.${Math.floor(Math.random() * 250)}-${Date.now()}`;
+  const body = JSON.stringify({ messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: '안녕' }] }] });
+  const send = () => chat(new Request('http://localhost/api/chat', { method: 'POST', headers: { cookie: cookie(session.id), 'x-forwarded-for': ip }, body }));
+  // Tests run without AI keys, so allowed requests stop at 503 (no model configured), never at a live API.
+  for (let i = 0; i < 10; i++) assert.equal((await send()).status, 503);
+  const limited = await send();
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get('retry-after')) > 0);
+  assert.match(((await limited.json()) as { error: string }).error, /요청이 너무 많아요/);
+});

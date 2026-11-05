@@ -1,11 +1,23 @@
-// Runs the test suite against a throwaway SQLite database built from the committed migrations.
+// Unit tests always run. DB integration tests (tests/*.db.test.ts) run only when TEST_DATABASE_URL points at a
+// throwaway Postgres database; the committed migrations are applied to it first.
 import { execSync, spawnSync } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 
-// SQLite paths in DATABASE_URL resolve relative to prisma/schema.prisma, so this is prisma/test.db (never the dev DB).
-// PayPal credentials are blanked (not deleted) so a .env loaded later cannot fill them: tests never reach the network.
-const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: 'file:./test.db', NODE_ENV: 'test', PAYPAL_CLIENT_ID: '', PAYPAL_CLIENT_SECRET: '' } as NodeJS.ProcessEnv;
-for (const file of ['prisma/test.db', 'prisma/test.db-journal']) rmSync(file, { force: true });
-execSync('npx prisma migrate deploy', { stdio: 'inherit', env });
-const result = spawnSync(process.execPath, ['--import', 'tsx', '--test', 'tests/*.test.ts'], { stdio: 'inherit', env });
+const testDb = process.env.TEST_DATABASE_URL?.trim();
+// Never the dev/prod DB: without TEST_DATABASE_URL, Prisma gets an unreachable URL so a stray query fails fast.
+const dbUrl = testDb || 'postgresql://unused:unused@127.0.0.1:1/unused';
+// Secrets are blanked (not deleted) so a .env loaded later cannot fill them: tests never reach PayPal or an LLM.
+const env: NodeJS.ProcessEnv = {
+  ...process.env, NODE_ENV: 'test', DATABASE_URL: dbUrl, DIRECT_URL: dbUrl,
+  PAYPAL_CLIENT_ID: '', PAYPAL_CLIENT_SECRET: '',
+  OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '', GOOGLE_GENERATIVE_AI_API_KEY: '',
+  DEMO_PASSWORD: '', SESSION_SECRET: '', APP_BASE_URL: '', VERCEL_URL: '',
+  RATE_LIMIT_SESSION_PER_HOUR: '', RATE_LIMIT_GLOBAL_PER_DAY: '',
+} as NodeJS.ProcessEnv;
+
+const files = readdirSync('tests').filter(f => f.endsWith('.test.ts')).sort();
+const selected = files.filter(f => testDb || !f.endsWith('.db.test.ts')).map(f => `tests/${f}`);
+if (testDb) execSync('npx prisma migrate deploy', { stdio: 'inherit', env });
+else console.log(`TEST_DATABASE_URL not set: skipping DB integration tests (${files.filter(f => f.endsWith('.db.test.ts')).join(', ')}).`);
+const result = spawnSync(process.execPath, ['--import', 'tsx', '--test', ...selected], { stdio: 'inherit', env });
 process.exitCode = result.status ?? 1;

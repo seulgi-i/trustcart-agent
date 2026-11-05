@@ -3,10 +3,12 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { convertToModelMessages, createUIMessageStreamResponse, isStepCount, streamText, toUIMessageStream, validateUIMessages } from 'ai';
 import { createShoppingTools } from '@/lib/agent';
+import { friendlyAiError, redactKeys } from '@/lib/ai-errors';
 import { db } from '@/lib/db';
 import { checkOrigin } from '@/lib/http';
 import { latestIntent } from '@/src/server/orders';
 import { paymentProvider } from '@/src/server/payments/select';
+import { clientKey, consumeChatQuota, rateLimitMessage } from '@/src/server/rate-limit';
 import { findSession } from '@/src/server/session';
 export const maxDuration = 60;
 export const runtime = 'nodejs';
@@ -42,6 +44,13 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: '올바른 채팅 메시지를 보내 주세요.' }, { status: 400 });
   }
+  // Charged only for well-formed requests from a valid session. Fails closed if the counter is unavailable.
+  try {
+    const quota = await consumeChatQuota(db, session.id, clientKey(request));
+    if (!quota.ok) return Response.json({ error: rateLimitMessage(quota) }, { status: 429, headers: { 'Retry-After': String(quota.retryAfterSeconds) } });
+  } catch {
+    return Response.json({ error: '사용량 한도를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.' }, { status: 503 });
+  }
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
   const googleKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim();
@@ -63,13 +72,14 @@ export async function POST(request: Request) {
       tools: shoppingTools,
       stopWhen: isStepCount(4),
       maxOutputTokens: 1800,
-      maxRetries: 2,
+      // A quota error (429) must not burn more free-tier requests on retries.
+      maxRetries: 0,
       abortSignal: request.signal,
     });
     return createUIMessageStreamResponse({ stream: toUIMessageStream({
       stream: result.stream,
       tools: shoppingTools,
-      onError: (e) => { const m = String((e as { message?: string })?.message ?? e).replace(/AIza[\w-]+/g, 'AIza***'); console.error('[chat] AI error:', m); return /high demand|UNAVAILABLE|503/i.test(m) ? 'AI model is overloaded (503). Please retry in a moment or set GOOGLE_MODEL.' : /quota|429|RESOURCE_EXHAUSTED/i.test(m) ? 'AI quota exceeded (429). Wait or check your Google AI Studio plan.' : /not found|no longer available|404/i.test(m) ? 'AI model not found (404). Check GOOGLE_MODEL.' : 'AI 응답에 실패했습니다. API 키, 모델, 사용 한도와 DB 초기화를 확인해 주세요.'; },
+      onError: (e) => { console.error('[chat] AI error:', redactKeys(String((e as { message?: string })?.message ?? e))); return friendlyAiError(e); },
     }) });
   } catch {
     return Response.json({ error: 'AI 연결에 실패했습니다. 서버 설정을 확인해 주세요.' }, { status: 502 });

@@ -4,11 +4,25 @@ import type { CheckoutOrder } from '@/src/server/payments/paypal';
 
 export type CheckoutUrls = { returnUrl: string; cancelUrl: string };
 
-// Fixed, never derived from the request Host header. PayPal appends its own token and PayerID query parameters.
-export const APP_ORIGIN = 'http://localhost:3000';
-export const checkoutUrls = (orderId: string): CheckoutUrls => ({
-  returnUrl: `${APP_ORIGIN}/checkout/return?orderId=${encodeURIComponent(orderId)}`,
-  cancelUrl: `${APP_ORIGIN}/checkout/cancel?orderId=${encodeURIComponent(orderId)}`,
+// From configuration only, never from the request Host header: APP_BASE_URL, else the Vercel deployment URL, else
+// localhost outside production. A production server with neither refuses to build checkout URLs.
+export function appOrigin(env: NodeJS.ProcessEnv = process.env) {
+  const base = env.APP_BASE_URL?.trim();
+  if (base) {
+    const url = new URL(base);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('APP_BASE_URL must be an http(s) URL.');
+    return url.origin;
+  }
+  const vercel = env.VERCEL_URL?.trim();
+  if (vercel) return new URL(`https://${vercel}`).origin;
+  if (env.NODE_ENV !== 'production') return 'http://localhost:3000';
+  throw new Error('Set APP_BASE_URL so PayPal can redirect the buyer back.');
+}
+
+// PayPal appends its own token and PayerID query parameters.
+export const checkoutUrls = (orderId: string, origin = appOrigin()): CheckoutUrls => ({
+  returnUrl: `${origin}/checkout/return?orderId=${encodeURIComponent(orderId)}`,
+  cancelUrl: `${origin}/checkout/cancel?orderId=${encodeURIComponent(orderId)}`,
 });
 
 // Request IDs are derived inside each provider from (operation, order), never passed in by callers.
