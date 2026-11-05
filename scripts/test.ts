@@ -11,6 +11,8 @@ const env: NodeJS.ProcessEnv = {
   ...process.env, NODE_ENV: 'test', DATABASE_URL: dbUrl, DIRECT_URL: dbUrl,
   PAYPAL_CLIENT_ID: '', PAYPAL_CLIENT_SECRET: '',
   OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '', GOOGLE_GENERATIVE_AI_API_KEY: '',
+  // Chat always uses the scripted mock model (replay fixtures in tests/fixtures/ai); recording is off.
+  AI_PROVIDER: 'mock', AI_RECORD: '', OLLAMA_BASE_URL: '', OLLAMA_MODEL: '',
   DEMO_PASSWORD: '', SESSION_SECRET: '', APP_BASE_URL: '', VERCEL_URL: '',
   RATE_LIMIT_SESSION_PER_HOUR: '', RATE_LIMIT_GLOBAL_PER_DAY: '',
   // Layer-1 limits at their documented defaults, whatever the developer's .env says.

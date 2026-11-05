@@ -1,0 +1,12 @@
+{
+  "match": {
+    "hint": "You are the TrustCart shopping agent.",
+    "user": "Buy 2 of the Mini Camping Lantern (camp-03)",
+    "intent": "Camping|2|50"
+  },
+  "source": "seed:scripted",
+  "steps": [
+    { "toolCalls": [{ "toolName": "searchProducts", "input": { "query": "lantern", "maxPrice": null, "requestedCategory": "Camping", "requestedQuantity": 2 } }] },
+    { "toolCalls": [{ "toolName": "buildCart", "input": { "items": [{ "productId": "camp-03", "quantity": 2 }] } }] }
+  ]
+}

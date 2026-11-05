@@ -1,0 +1,11 @@
+{
+  "match": {
+    "hint": "You are the TrustCart shopping agent.",
+    "user": "Buy 2 towels",
+    "intent": "Camping|2|50"
+  },
+  "source": "seed:scripted",
+  "steps": [
+    { "toolCalls": [{ "toolName": "searchProducts", "input": { "query": "towel", "maxPrice": null, "requestedCategory": "Household", "requestedQuantity": 2 } }] }
+  ]
+}

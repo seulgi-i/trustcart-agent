@@ -1,11 +1,9 @@
-import { createOpenAI } from '@ai-sdk/openai';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { convertToModelMessages, createUIMessageStreamResponse, isStepCount, streamText, toUIMessageStream, validateUIMessages } from 'ai';
 import { createShoppingTools } from '@/lib/agent';
 import { friendlyAiError, redactKeys } from '@/lib/ai-errors';
 import { db } from '@/lib/db';
 import { checkOrigin } from '@/lib/http';
+import { chatModel, resolveProvider } from '@/src/server/ai/provider';
 import { latestIntent } from '@/src/server/orders';
 import { paymentProvider } from '@/src/server/payments/select';
 import { clientKey, consumeChatQuota, rateLimitMessage } from '@/src/server/rate-limit';
@@ -51,15 +49,11 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: 'Could not check the usage limit. Please try again shortly.' }, { status: 503 });
   }
-  const openaiKey = process.env.OPENAI_API_KEY?.trim();
-  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
-  const googleKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim();
-  if (!openaiKey && !anthropicKey && !googleKey) return Response.json({ error: 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY in .env and restart the server.' }, { status: 503 });
+  const provider = resolveProvider();
+  if (!provider.ok) return Response.json({ error: provider.error }, { status: 503 });
   try {
     const result = streamText({
-      model: openaiKey ? createOpenAI({ apiKey: openaiKey })(process.env.OPENAI_MODEL || 'gpt-4.1-mini')
-        : anthropicKey ? createAnthropic({ apiKey: anthropicKey })(process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5')
-      : createGoogleGenerativeAI({ apiKey: googleKey })(process.env.GOOGLE_MODEL || 'gemini-3.5-flash'),
+      model: chatModel(provider),
       system: 'You are the TrustCart shopping agent. Reply in clear, concise English. The currency is USD. Use searchProducts first, then pass only IDs from its actual results to buildCart. When changing a cart, rebuild the whole cart. ' +
         'In searchProducts, set requestedCategory to the category the user wants in this request and requestedQuantity to the quantity they mentioned, if any. Search only within the category of the saved purchase intent, once, with specific keywords. ' +
         'If a tool returns INTENT_MISMATCH, do not search again or build a cart. Briefly explain how the request differs from the saved purchase intent and ask the user to update the Purchase intent form (category, budget, quantity) first. ' +

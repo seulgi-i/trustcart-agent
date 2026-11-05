@@ -20,7 +20,7 @@ Everything runs against PayPal **Sandbox** (or a labeled mock provider). No real
 ## Architecture
 
 - **Next.js 16 (App Router) + TypeScript.** UI pages in `app/`, API route handlers in `app/api/`, and the demo password gate in `proxy.ts` (Next 16's replacement for `middleware.ts`).
-- **Agent** (`lib/agent.ts`, `app/api/chat/route.ts`): Vercel AI SDK `streamText` with three tools: `searchProducts`, `buildCart` and `checkout`. Works with Gemini (default, free tier), OpenAI or Anthropic.
+- **Agent** (`lib/agent.ts`, `app/api/chat/route.ts`): Vercel AI SDK `streamText` with three tools: `searchProducts`, `buildCart` and `checkout`. Works with Gemini (default, free tier), a local Ollama model, an offline mock model, OpenAI or Anthropic (see AI providers).
 - **Domain** (`src/domain/`): `policy.ts` evaluates a cart against the Layer-1 rules (intent, price finalization, payment history) and the Layer-2 settings and returns `ALLOW`, `NEEDS_APPROVAL` or `DENY` with `{ layer, ruleId, message }` reasons; `layer1.ts` holds the system limits and their env parsing; `spending-policy.ts` holds the Layer-2 defaults, the Zod schema, the time-window helpers and the cool-down classifier; `rule-labels.ts` maps rule IDs to labels; `scanner.ts` flags injection-like text in untrusted seller content; `money.ts` does integer-cent math.
 - **Server** (`src/server/`): orders, the approval state machine, the session spending policy and the pre-charge schedule (`orders.ts`), anonymous demo sessions (`session.ts`), the payment provider (`payments/` — PayPal Sandbox REST or mock), chat rate limits (`rate-limit.ts`) and the demo gate (`demo-gate.ts`).
 - **Data**: Prisma + PostgreSQL. The catalog is seeded from `data/products.json` (30 products, 10 of them carrying prompt-injection payloads). `SessionPolicy` stores the effective Layer-2 policy per session (no row = defaults) plus a pending loosening and its `pendingEffectiveAt`; `Order.captureScheduledAt` / `captureCanceled` drive the pre-charge notice. `AuditLog` is append-only, enforced by database triggers.
@@ -70,6 +70,9 @@ Deploying to Vercel: set the environment variables below in the project settings
 | `LAYER1_SPLIT_SINGLE_LIMIT_CENTS` / `LAYER1_SPLIT_WINDOW_MINUTES` | no | Layer 1: payments for the same product or seller within the window may not exceed this total (default `50000` = the hard cap, its maximum / `60`). |
 | `LAYER1_DUPLICATE_WINDOW_MINUTES` | no | Layer 1: same cart and total within this window is a duplicate (default `10`). |
 | `LAYER1_DAILY_HARD_CAP_CENTS` / `LAYER1_MONTHLY_HARD_CAP_CENTS` | no | Layer 1: committed money per UTC day / month (default `500000` / `2000000`; monthly is never below daily). The user's daily maximum must fit under the daily cap. |
+| `AI_PROVIDER` | no | `mock`, `ollama` or `gemini` (see AI providers). Leave unset on Vercel. |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | with ollama | Ollama's OpenAI-compatible endpoint and model (default `http://localhost:11434/v1`, `qwen2.5:7b`). |
+| `AI_RECORD` | no | `1` = record ollama/gemini turns as mock replay fixtures (local only). |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | one AI key | Google AI Studio key (free tier). |
 | `GOOGLE_MODEL` | no | Gemini model override. Default `gemini-3.5-flash`. |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | one AI key | OpenAI key and model (default `gpt-4.1-mini`). Takes precedence if set. |
@@ -79,6 +82,17 @@ Deploying to Vercel: set the environment variables below in the project settings
 | `TEST_DATABASE_URL` | no | Throwaway Postgres for DB integration tests (see Testing). |
 
 **Dev vs demo model.** The default `gemini-3.5-flash` supports tool calling on the free tier and is what the public demo should use. While developing, point `GOOGLE_MODEL` at a cheaper or less contended model (or use a separate key) so day-to-day testing does not spend the demo's free-tier quota. If Gemini returns 404/503 for a model, try another via `GOOGLE_MODEL`.
+
+### AI providers
+
+`/api/chat` picks its model in `src/server/ai/provider.ts`:
+
+- **`AI_PROVIDER=gemini`**: Gemini via `GOOGLE_GENERATIVE_AI_API_KEY` / `GOOGLE_MODEL`. This is what deployments use: when `AI_PROVIDER` is unset and `VERCEL=1`, `VERCEL_ENV` or `NODE_ENV=production` is set, the app always uses Gemini (and fails with a clear error if the Google key is missing), so do not set `AI_PROVIDER` on Vercel.
+- **`AI_PROVIDER=ollama`**: a local model through Ollama's OpenAI-compatible Chat Completions API (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`, default `qwen2.5:7b`, which supports tool calling). Run `ollama pull qwen2.5:7b` first.
+- **`AI_PROVIDER=mock`**: an offline, deterministic model (`src/server/ai/mock-model.ts`) that still runs the real `streamText` loop, the real shopping tools, the scanner and the policy. It replays fixtures from `tests/fixtures/ai/*.json` keyed by the system prompt's first sentence, the last user message and the saved intent; without a matching fixture it follows a small script (search, then build a cart with the named or cheapest unflagged product, then summarize; checkout only when the user asks). `npm test` always uses it.
+- **Unset, locally**: the old precedence by key (OpenAI, then Anthropic, then Google). An explicit `AI_PROVIDER` always wins over any key.
+
+To record new fixtures, run locally with `AI_PROVIDER=ollama` (or `gemini`) and `AI_RECORD=1`; each chat turn is written to `tests/fixtures/ai/<hash>.json` (tool names, tool inputs and the model's text; tool results are recomputed on replay). Commit the files you want `AI_PROVIDER=mock` to replay.
 
 ## PayPal Sandbox
 
@@ -99,7 +113,7 @@ Test database strategy:
 
 - **Unit tests** (`tests/*.test.ts`) need no database and always run: policy, scanner, catalog, PayPal request contracts (mocked `fetch`), the demo gate and proxy, rate limiting (against an in-memory fake of the Prisma `rateLimit` delegate), AI error mapping and checkout URL derivation.
 - **DB integration tests** (`tests/*.db.test.ts`: sessions, approval inbox, checkout state machine, chat rate limit) run only when `TEST_DATABASE_URL` points at a **throwaway** Postgres database. The runner applies the migrations to it first. Without it they are skipped with a notice, and Prisma is given an unreachable URL so no test can touch your dev or production database.
-- Tests never call a live LLM or PayPal: AI keys and PayPal credentials are blanked by `scripts/test.ts`, and payment tests use mock providers or mocked `fetch`.
+- Tests never call a live LLM or PayPal: AI keys and PayPal credentials are blanked and `AI_PROVIDER=mock` is forced by `scripts/test.ts`, and payment tests use mock providers or mocked `fetch`. `tests/ai-provider.test.ts` covers provider resolution and runs the mock model through `streamText` with in-memory tools (happy path, a flagged red-team product, an intent mismatch, record/replay).
 
 ```sh
 TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/trustcart_test" npm test
