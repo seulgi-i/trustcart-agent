@@ -31,7 +31,8 @@ export function Chat() {
             })}
           </div>
         ))}
-        {error && <p className="text-red-700">{error.message}</p>}
+        {(status === 'submitted' || status === 'streaming') && <p className="text-xs text-stone-500">Agent is thinking...</p>}
+        {error && <p className="text-red-700">AI error: {error.message || 'request failed'}</p>}
       </div>
       <form className="mt-2 flex gap-2" onSubmit={e => { e.preventDefault(); if (input.trim()) { sendMessage({ text: input }); setInput(''); } }}>
         <input className="flex-1 border px-2 py-1" value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. 캠핑 랜턴 2개 골라줘 / 주문해줘" disabled={status !== 'ready'} />
