@@ -78,7 +78,7 @@ test('proxy: no-op without DEMO_PASSWORD; otherwise gates pages and API, leaves 
   await withEnv({ DEMO_PASSWORD: 'open sesame', SESSION_SECRET: undefined }, async () => {
     const api = proxy(new NextRequest('http://localhost/api/approvals'));
     assert.equal(api.status, 401);
-    assert.match(((await api.json()) as { error: string }).error, /비밀번호/);
+    assert.match(((await api.json()) as { error: string }).error, /password/i);
     const page = proxy(new NextRequest('http://localhost/approvals?tab=1'));
     assert.equal(page.status, 307);
     assert.equal(page.headers.get('location'), 'http://localhost/login?next=%2Fapprovals%3Ftab%3D1');
@@ -144,9 +144,10 @@ test('client key prefers platform headers and ignores spoofable leftmost X-Forwa
   assert.doesNotMatch(key({ 'x-forwarded-for': '203.0.113.7' }), /203/);
 });
 
-test('model quota errors become the friendly Korean message; keys are redacted', () => {
+test('model quota errors become the friendly English message; keys are redacted', () => {
   for (const m of ['429 Too Many Requests', 'RESOURCE_EXHAUSTED: quota exceeded', 'You exceeded your current quota']) assert.equal(friendlyAiError(new Error(m)), AI_RESTING);
-  assert.match(AI_RESTING, /^AI가 잠시 쉬고 있어요\.\.\./);
+  assert.match(AI_RESTING, /^AI is taking a short break\.\.\./);
+  assert.match(AI_RESTING, /Approvals and payments still work without AI/);
   assert.match(friendlyAiError(new Error('503 UNAVAILABLE high demand')), /503/);
   assert.match(friendlyAiError(new Error('models/x is not found')), /404/);
   assert.equal(redactKeys('key=AIzaSyAbc-123 and sk-proj-xyz'), 'key=AIza*** and sk-***');

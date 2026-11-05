@@ -5,7 +5,7 @@ export default async function CheckoutCancelPage({ searchParams }: { searchParam
   return (
     <main className="mx-auto max-w-4xl px-4 py-8">
       <h1 className="text-2xl font-semibold">Payment cancelled</h1>
-      <CheckoutStep orderId={typeof orderId === 'string' ? orderId : null} action="cancel" />
+      <CheckoutStep orderId={typeof orderId === 'string' ? orderId : null} />
     </main>
   );
 }

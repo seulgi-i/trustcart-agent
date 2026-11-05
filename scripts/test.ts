@@ -13,6 +13,9 @@ const env: NodeJS.ProcessEnv = {
   OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '', GOOGLE_GENERATIVE_AI_API_KEY: '',
   DEMO_PASSWORD: '', SESSION_SECRET: '', APP_BASE_URL: '', VERCEL_URL: '',
   RATE_LIMIT_SESSION_PER_HOUR: '', RATE_LIMIT_GLOBAL_PER_DAY: '',
+  // Layer-1 limits at their documented defaults, whatever the developer's .env says.
+  LAYER1_VELOCITY_MAX: '', LAYER1_VELOCITY_WINDOW_MINUTES: '', LAYER1_SPLIT_SINGLE_LIMIT_CENTS: '', LAYER1_SPLIT_WINDOW_MINUTES: '',
+  LAYER1_DUPLICATE_WINDOW_MINUTES: '', LAYER1_DAILY_HARD_CAP_CENTS: '', LAYER1_MONTHLY_HARD_CAP_CENTS: '',
 } as NodeJS.ProcessEnv;
 
 const files = readdirSync('tests').filter(f => f.endsWith('.test.ts')).sort();

@@ -28,7 +28,7 @@ const noPayments: PaymentProvider = { kind: 'mock', merchantId: 'X', createOrder
 
 async function sessionWithOrder(cart: CartLine[]) {
   const session = await createSession(db);
-  await setIntent(db, session.id, { budgetCents: 4000, category: '캠핑', quantity: 2 });
+  await setIntent(db, session.id, { budgetCents: 4000, category: 'Camping', quantity: 2 });
   await saveCart(db, session.id, cart);
   const submitted = await submitCart(db, session.id);
   assert.ok(submitted.ok);
@@ -51,21 +51,21 @@ test('intent is set by the user route, validated against the hard cap', async ()
   const session = await createSession(db);
   const send = (body: unknown, headers: Record<string, string> = { cookie: cookie(session.id) }) =>
     postIntent(new Request('http://localhost/api/intent', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }));
-  assert.equal((await send({ budgetUSD: 40, category: '캠핑', quantity: 2 }, {})).status, 401);
-  assert.equal((await send({ budgetUSD: 40, category: '캠핑', quantity: 2 }, { cookie: cookie(session.id), origin: 'https://evil.example' })).status, 403);
-  assert.equal((await send({ budgetUSD: 9999, category: '캠핑', quantity: 2 })).status, 400);
-  assert.equal((await send({ budgetUSD: 40, category: '캠핑', quantity: -1 })).status, 400);
+  assert.equal((await send({ budgetUSD: 40, category: 'Camping', quantity: 2 }, {})).status, 401);
+  assert.equal((await send({ budgetUSD: 40, category: 'Camping', quantity: 2 }, { cookie: cookie(session.id), origin: 'https://evil.example' })).status, 403);
+  assert.equal((await send({ budgetUSD: 9999, category: 'Camping', quantity: 2 })).status, 400);
+  assert.equal((await send({ budgetUSD: 40, category: 'Camping', quantity: -1 })).status, 400);
   assert.equal((await send({ budgetUSD: 40, category: 'weapons', quantity: 2 })).status, 400);
-  assert.equal((await send({ budgetUSD: 40, category: '캠핑', quantity: 2 })).status, 201);
-  assert.deepEqual(await db.intent.findFirst({ where: { sessionId: session.id }, select: { budgetCents: true, category: true, quantity: true } }), { budgetCents: 4000, category: '캠핑', quantity: 2 });
+  assert.equal((await send({ budgetUSD: 40, category: 'Camping', quantity: 2 })).status, 201);
+  assert.deepEqual(await db.intent.findFirst({ where: { sessionId: session.id }, select: { budgetCents: true, category: true, quantity: true } }), { budgetCents: 4000, category: 'Camping', quantity: 2 });
 });
 
 test('same turn: reading untrusted content blocks checkout, a new turn may check out', async () => {
   const session = await createSession(db);
-  await setIntent(db, session.id, { budgetCents: 4000, category: '캠핑', quantity: 2 });
+  await setIntent(db, session.id, { budgetCents: 4000, category: 'Camping', quantity: 2 });
 
   const turn1 = createShoppingTools(session.id);
-  assert.equal((await run(turn1.searchProducts, { query: '랜턴', maxPrice: null, requestedCategory: '캠핑' })).ok, true);
+  assert.equal((await run(turn1.searchProducts, { query: 'lantern', maxPrice: null, requestedCategory: 'Camping' })).ok, true);
   assert.equal((await run(turn1.buildCart, { items: [{ productId: 'camp-06', quantity: 2 }] })).ok, true);
   const blocked = await run(turn1.checkout, {});
   assert.equal(blocked.ok, false);
@@ -77,25 +77,25 @@ test('same turn: reading untrusted content blocks checkout, a new turn may check
   const submitted = await run(turn2.checkout, {});
   assert.equal(submitted.ok, true);
   assert.equal(submitted.status, 'READY');
-  assert.equal((await run(turn2.searchProducts, { query: '', maxPrice: null, requestedCategory: '캠핑' })).ok, false);
+  assert.equal((await run(turn2.searchProducts, { query: '', maxPrice: null, requestedCategory: 'Camping' })).ok, false);
 });
 
 type Gate = { ok: boolean; blocked?: string; products?: { id: string; category: string }[]; saved?: { category: string; quantity: number }; requested?: { category: string; quantity?: number }; mismatches?: { field: string }[] };
 const gate = async (t: ToolLike, input: unknown) => await run(t, input) as unknown as Gate;
 const campingSession = async () => {
   const session = await createSession(db);
-  await setIntent(db, session.id, { budgetCents: 4000, category: '캠핑', quantity: 2 });
+  await setIntent(db, session.id, { budgetCents: 4000, category: 'Camping', quantity: 2 });
   return session.id;
 };
 
 test('intent pre-check: off-category search is blocked before any catalog read', async () => {
   const sessionId = await campingSession();
-  const res = await gate(createShoppingTools(sessionId).searchProducts, { query: '옷걸이', requestedCategory: '생활용품', requestedQuantity: 1 });
+  const res = await gate(createShoppingTools(sessionId).searchProducts, { query: 'hanger', requestedCategory: 'Household', requestedQuantity: 1 });
   assert.equal(res.ok, false);
   assert.equal(res.blocked, 'INTENT_MISMATCH');
   assert.equal(res.products, undefined);
-  assert.deepEqual(res.saved, { budgetCents: 4000, category: '캠핑', quantity: 2 });
-  assert.deepEqual(res.requested, { category: '생활용품', quantity: 1 });
+  assert.deepEqual(res.saved, { budgetCents: 4000, category: 'Camping', quantity: 2 });
+  assert.deepEqual(res.requested, { category: 'Household', quantity: 1 });
   assert.deepEqual(res.mismatches?.map(m => m.field), ['category', 'quantity']);
   const logs = await db.auditLog.findMany({ where: { sessionId, action: 'searchProducts' }, select: { outcome: true } });
   assert.deepEqual(logs.map(l => l.outcome), ['INTENT_MISMATCH']);
@@ -104,7 +104,7 @@ test('intent pre-check: off-category search is blocked before any catalog read',
 test('a blocked off-category search reads nothing, so it does not block checkout in the same turn', async () => {
   const sessionId = await campingSession();
   const tools = createShoppingTools(sessionId);
-  assert.equal((await gate(tools.searchProducts, { query: '옷걸이', requestedCategory: '생활용품' })).blocked, 'INTENT_MISMATCH');
+  assert.equal((await gate(tools.searchProducts, { query: 'hanger', requestedCategory: 'Household' })).blocked, 'INTENT_MISMATCH');
   const res = await run(tools.checkout, {});
   assert.doesNotMatch(String(res.error ?? ''), /untrusted/);
   const logs = await db.auditLog.findMany({ where: { sessionId, action: 'checkout', outcome: 'BLOCKED' } });
@@ -114,7 +114,7 @@ test('a blocked off-category search reads nothing, so it does not block checkout
 test('a search still in flight blocks a parallel checkout', async () => {
   const sessionId = await campingSession();
   const tools = createShoppingTools(sessionId);
-  const [search, checkout] = await Promise.all([run(tools.searchProducts, { query: '랜턴', requestedCategory: '캠핑' }), run(tools.checkout, {})]);
+  const [search, checkout] = await Promise.all([run(tools.searchProducts, { query: 'lantern', requestedCategory: 'Camping' }), run(tools.checkout, {})]);
   assert.equal(search.ok, true);
   assert.equal(checkout.ok, false);
   assert.match(checkout.error!, /untrusted/);
@@ -125,7 +125,7 @@ test('intent pre-check: off-category cart is blocked by catalog category and not
   const res = await gate(createShoppingTools(sessionId).buildCart, { items: [{ productId: 'home-13', quantity: 1 }, { productId: 'camp-06', quantity: 1 }] });
   assert.equal(res.ok, false);
   assert.equal(res.blocked, 'INTENT_MISMATCH');
-  assert.equal(res.requested?.category, '생활용품');
+  assert.equal(res.requested?.category, 'Household');
   assert.equal((await db.demoSession.findUniqueOrThrow({ where: { id: sessionId } })).cartJson, '[]');
 });
 
@@ -133,14 +133,14 @@ test('intent pre-check: matching category searches only that category and saves 
   const sessionId = await campingSession();
   const tools = createShoppingTools(sessionId);
   // maxPrice omitted: valid for the schema the model is held to, and for execute.
-  assert.ok(searchSchema.safeParse({ query: '랜턴', requestedCategory: '캠핑' }).success);
-  const lantern = await gate(tools.searchProducts, { query: '랜턴', requestedCategory: '캠핑' });
+  assert.ok(searchSchema.safeParse({ query: 'lantern', requestedCategory: 'Camping' }).success);
+  const lantern = await gate(tools.searchProducts, { query: 'lantern', requestedCategory: 'Camping' });
   assert.equal(lantern.ok, true);
   assert.ok(lantern.products!.length > 0);
   // An empty query cannot spill into other categories.
-  const all = await gate(tools.searchProducts, { query: '', requestedCategory: '캠핑', requestedQuantity: 3 });
+  const all = await gate(tools.searchProducts, { query: '', requestedCategory: 'Camping', requestedQuantity: 3 });
   assert.equal(all.ok, true);
-  assert.ok(all.products!.length > 0 && all.products!.every(p => p.category === '캠핑'));
+  assert.ok(all.products!.length > 0 && all.products!.every(p => p.category === 'Camping'));
   assert.deepEqual(all.mismatches?.map(m => m.field), ['quantity']);
   assert.equal((await run(tools.buildCart, { items: [{ productId: 'camp-06', quantity: 2 }] })).ok, true);
   assert.deepEqual(JSON.parse((await db.demoSession.findUniqueOrThrow({ where: { id: sessionId } })).cartJson), [{ productId: 'camp-06', quantity: 2 }]);
@@ -216,15 +216,15 @@ test('chat requires a same-origin request with a valid session', async () => {
   assert.equal((await send({ cookie: cookie(session.id) })).status, 400);
 });
 
-test('chat is rate limited per session with a Korean 429 before any model call', async () => {
+test('chat is rate limited per session with an English 429 before any model call', async () => {
   const session = await createSession(db);
   const ip = `198.51.100.${Math.floor(Math.random() * 250)}-${Date.now()}`;
-  const body = JSON.stringify({ messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: '안녕' }] }] });
+  const body = JSON.stringify({ messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hello' }] }] });
   const send = () => chat(new Request('http://localhost/api/chat', { method: 'POST', headers: { cookie: cookie(session.id), 'x-forwarded-for': ip }, body }));
   // Tests run without AI keys, so allowed requests stop at 503 (no model configured), never at a live API.
   for (let i = 0; i < 10; i++) assert.equal((await send()).status, 503);
   const limited = await send();
   assert.equal(limited.status, 429);
   assert.ok(Number(limited.headers.get('retry-after')) > 0);
-  assert.match(((await limited.json()) as { error: string }).error, /요청이 너무 많아요/);
+  assert.match(((await limited.json()) as { error: string }).error, /Too many requests/);
 });

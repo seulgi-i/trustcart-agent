@@ -20,7 +20,7 @@ function errorText(error: Error) {
     const body = JSON.parse(error.message) as { error?: unknown };
     if (typeof body.error === 'string') return body.error;
   } catch {}
-  return error.message || 'AI 요청에 실패했습니다.';
+  return error.message || 'The AI request failed.';
 }
 
 export function Chat() {
@@ -45,7 +45,7 @@ export function Chat() {
         {error && <p className="text-red-700">{errorText(error)}</p>}
       </div>
       <form className="mt-2 flex gap-2" onSubmit={e => { e.preventDefault(); if (input.trim()) { sendMessage({ text: input }); setInput(''); } }}>
-        <input className="flex-1 border px-2 py-1" value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. 캠핑 랜턴 2개 골라줘 / 주문해줘" disabled={status !== 'ready'} />
+        <input className="flex-1 border px-2 py-1" value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. Pick 2 camping lanterns / Place the order" disabled={status !== 'ready'} />
         <button className="rounded bg-stone-800 px-3 py-1 text-white" disabled={status !== 'ready'}>Send</button>
       </form>
     </section>

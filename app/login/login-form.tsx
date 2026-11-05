@@ -12,9 +12,9 @@ export function LoginForm({ next }: { next: string }) {
     try {
       const res = await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password }) });
       if (res.ok) { window.location.assign(next); return; }
-      setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? '로그인에 실패했습니다.');
+      setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Sign-in failed.');
     } catch {
-      setError('로그인에 실패했습니다.');
+      setError('Sign-in failed.');
     }
     setBusy(false);
   }

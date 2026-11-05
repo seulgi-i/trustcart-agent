@@ -7,7 +7,7 @@ export function proxy(request: NextRequest) {
   if (!gateEnabled()) return NextResponse.next();
   const { pathname, search } = request.nextUrl;
   if (isPublicPath(pathname) || verifyGateToken(request.cookies.get(GATE_COOKIE)?.value)) return NextResponse.next();
-  if (pathname.startsWith('/api/')) return NextResponse.json({ error: '데모 비밀번호가 필요합니다. /login 에서 로그인해 주세요.' }, { status: 401 });
+  if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'Demo password required. Please sign in at /login.' }, { status: 401 });
   const login = new URL('/login', request.url);
   login.searchParams.set('next', pathname + search);
   return NextResponse.redirect(login);

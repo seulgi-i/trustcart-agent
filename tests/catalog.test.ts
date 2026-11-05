@@ -53,5 +53,5 @@ test('money_is_integer_cents', () => {
   assert.equal(lineTotalCents(1899, 3), 5697);
   assert.equal(usdToCents(0.1) + usdToCents(0.2), 30);
   assert.throws(() => usdToCents(1.005));
-  assert.equal(evaluateCart({ budgetCents: 10_000, category: '캠핑', quantity: 3 }, [{ productId: 'camp-06', quantity: 3 }], runtimeCatalog()).totalCents, 5697);
+  assert.equal(evaluateCart({ budgetCents: 10_000, category: 'Camping', quantity: 3 }, [{ productId: 'camp-06', quantity: 3 }], runtimeCatalog()).totalCents, 5697);
 });

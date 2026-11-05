@@ -70,6 +70,6 @@ export async function consumeLoginAttempt(db: RateLimitStore, ipKey: string, now
 
 export function rateLimitMessage(quota: Extract<ChatQuota, { ok: false }>) {
   return quota.scope === 'session'
-    ? '요청이 너무 많아요. 이 세션의 시간당 AI 대화 한도를 다 썼어요. 잠시 후 다시 시도해 주세요. 승인함과 결제는 계속 사용할 수 있어요.'
-    : '오늘의 AI 대화 한도를 다 썼어요. 내일 다시 시도해 주세요. 승인함과 결제는 계속 사용할 수 있어요.';
+    ? 'Too many requests. This session has used its hourly AI chat limit. Please try again later. Approvals and payments still work.'
+    : "Today's AI chat limit has been reached. Please try again tomorrow. Approvals and payments still work.";
 }

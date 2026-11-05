@@ -16,6 +16,31 @@ model DemoSession {
   cartJson  String   @default("[]")
   intents   Intent[]
   orders    Order[]
+  policy    SessionPolicy?
+}
+
+// Layer-2 spending policy, set only through the /policy page. No row = defaults (see src/domain/spending-policy.ts).
+// Bounds are validated on write against the Layer-1 limits (src/domain/layer1.ts). The plain columns are the
+// EFFECTIVE policy. A loosening waits in pendingJson (the full requested policy) until pendingEffectiveAt (now + 24 h),
+// when the next read promotes it.
+model SessionPolicy {
+  sessionId                 String      @id
+  session                   DemoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  perOrderMaxCents          Int
+  dailyMaxCents             Int
+  allowedCategories         String[]
+  // JSON Record<category, cents>
+  perCategoryMaxJson        String      @default("{}")
+  requireApprovalAboveCents Int
+  // Local hours in `timezone`, end exclusive; start > end is overnight.
+  allowedStartHour          Int         @default(0)
+  allowedEndHour            Int         @default(24)
+  allowedWeekdays           Int[]       @default([0, 1, 2, 3, 4, 5, 6])
+  timezone                  String      @default("America/New_York")
+  prechargeDelaySeconds     Int         @default(60)
+  pendingJson               String?
+  pendingEffectiveAt        DateTime?
+  updatedAt                 DateTime    @updatedAt
 }
 
 // Purchase intent set by the user through the UI, never by the model. A change is a new row; the latest one applies.
@@ -60,6 +85,10 @@ model Order {
   approvalUrl     String?
   captureId       String?     @unique
   failureReason   String?
+  // Pre-charge notice: capture is refused until the session's effective prechargeDelaySeconds after captureScheduledAt, and for good
+  // once captureCanceled is set. Enforced from these columns, never from an in-memory timer.
+  captureScheduledAt DateTime?
+  captureCanceled    Boolean   @default(false)
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 

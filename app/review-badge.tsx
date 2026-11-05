@@ -13,7 +13,7 @@ export function ReviewBadge() {
   }, []);
   return (
     <Link href="/approvals" className="rounded px-2 py-1 hover:bg-stone-200">
-      Reviews{count > 0 && <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs text-white">검토할 주문 {count}건</span>}
+      Reviews{count > 0 && <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs text-white">{count} {count === 1 ? 'order' : 'orders'} to review</span>}
     </Link>
   );
 }

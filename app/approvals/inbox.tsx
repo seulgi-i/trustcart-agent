@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import type { Evaluation } from '@/src/domain/policy';
+import { describeReason } from '@/src/domain/rule-labels';
 
 type Order = {
   id: string; status: string; totalCents: number; provider: string | null; providerOrderId: string | null; captureId: string | null;
@@ -59,7 +60,10 @@ export function Inbox() {
             <p className="mt-1 text-lg">{usd(o.totalCents)} <span className="text-xs text-stone-500">order {o.id}</span></p>
 
             <h3 className="mt-2 font-medium">Rules hit</h3>
-            {reasons.length ? <ul className="list-disc pl-5">{reasons.map((r, i) => <li key={i}><span className={r.outcome === 'DENY' ? 'text-red-700' : 'text-amber-700'}>{r.outcome}</span> {r.rule}: expected {r.expected}, got {r.actual}</li>)}</ul> : <p>None</p>}
+            {reasons.length ? <ul className="list-disc pl-5">{reasons.map((r, i) => {
+              const { title, message } = describeReason(r);
+              return <li key={i}><span className={r.outcome === 'DENY' ? 'text-red-700' : 'text-amber-700'}>{r.outcome}</span> <strong>{title}</strong> — {message}</li>;
+            })}</ul> : <p>None</p>}
 
             <h3 className="mt-2 font-medium">Injection scanner</h3>
             {scan.length ? <ul className="list-disc pl-5">{scan.map(s => <li key={s.productId}>{s.productId}: suspicious instructions ({s.hits.join(', ')})</li>)}</ul> : <p>No suspicious instructions found (not a guarantee).</p>}

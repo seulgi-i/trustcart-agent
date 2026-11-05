@@ -7,12 +7,12 @@ export type Product = RuntimeProduct;
 // maxPrice is nullish: models often omit it, and an omitted key must mean "no limit", not a schema error.
 const queryFields = {
   query: z.string().max(200),
-  maxPrice: z.number().min(0).max(HARD_CAP_CENTS / 100).nullish().describe('개별 상품 최대 USD 가격. 제한 없으면 생략 또는 null.'),
+  maxPrice: z.number().min(0).max(HARD_CAP_CENTS / 100).nullish().describe('Maximum USD price per product. Omit or null for no limit.'),
 };
 export const searchSchema = z.object({
   ...queryFields,
-  requestedCategory: z.string().min(1).max(40).describe('이번 요청에서 사용자가 원하는 카탈로그 카테고리(예: 캠핑, 생활용품). 서버가 저장된 구매 조건과 비교한다.'),
-  requestedQuantity: z.number().int().min(-1000).max(1000).nullish().describe('사용자가 이번 요청에서 말한 총 수량. 말하지 않았으면 생략.'),
+  requestedCategory: z.string().min(1).max(40).describe('Catalog category the user wants in this request (e.g. Camping, Household). The server compares it with the saved purchase intent.'),
+  requestedQuantity: z.number().int().min(-1000).max(1000).nullish().describe('Total quantity the user mentioned in this request. Omit if not mentioned.'),
 });
 // Quantities are only bounded for sanity here; zero, negative and oversized values reach the policy and are DENY there.
 export const cartSchema = z.object({
