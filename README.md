@@ -15,6 +15,11 @@ Everything runs against PayPal **Sandbox** (or a labeled mock provider). No real
   - **24 h cool-down on loosening.** Tightening applies immediately. Anything that loosens (higher caps or threshold, shorter delay, more categories/hours/days, a removed category limit, a time-zone change while hours or days are restricted) is stored as pending and takes effect 24 hours later, promoted on the next read. A mixed save applies the tightened parts now and holds the rest.
   - The review inbox shows each rule hit as `Layer n · rule` with a message, e.g. *Layer 1 · Split-payment detection*, *Layer 2 · Outside allowed hours*.
 - **Pre-charge countdown.** When the buyer returns from PayPal, nothing is captured yet: a notice says *"Payment scheduled: $X to &lt;merchant&gt; for &lt;items&gt;. Capture in N seconds — Cancel"*, where N is your Layer-2 pre-charge delay. The server refuses the capture until that delay has passed on its own clock, and refuses it for good after Cancel.
+- **Post-payment protection (`/orders`).**
+  - **Signed intent mandate.** Every successful capture writes, in the same transaction, a certificate inspired by the AP2 Mandate concept: your intent (budget, quantity, category), the approved cart (items, quantities, unit prices, shipping, total, merchant), why each item was picked (the agent's own note, marked untrusted, plus server checks), the applied policy (Layer-1 limits, effective Layer-2 values, decision reasons), timestamps and the PayPal order and capture IDs. It is canonical JSON (sorted keys) signed with **Ed25519** (`node:crypto`) using `MANDATE_SIGNING_KEY`; the fingerprint is the sha256 of the public key's SPKI DER. Without the key, development uses a public dev key with a warning and production refuses to capture. `GET /api/mandate/public-key` publishes the key; each order page has **Verify signature**.
+  - **Billing mismatch check (demo).** Simulate the merchant's billing (`none`, `extra_quantity`, `hidden_fee`, `price_change`) and compare it with the mandate; differences are listed as `{ field, expected, actual }` and shown in red.
+  - **Refunds.** A mismatch creates a refund draft with the evidence (mandate + diff) and a suggested partial amount (the overcharge). On your click the server calls PayPal `POST /v2/payments/captures/{id}/refund` (partial with an amount, full without) with a `PayPal-Request-Id` derived from the order and mismatch. The server checks ownership, `0 < amount <= captured - already refunded`, and allows one refund per mismatch (unique constraint + idempotency key). Drafts and results are audited.
+  - **Evidence package.** JSON or PDF download (mandate, verification result, diffs, order and capture IDs, audit trail). The PDF is written by a small built-in generator. No dispute is opened.
 - **Human approval inbox, prompt-injection defense and verified PayPal Sandbox capture** (see Security model).
 
 ## Architecture
@@ -23,7 +28,7 @@ Everything runs against PayPal **Sandbox** (or a labeled mock provider). No real
 - **Agent** (`lib/agent.ts`, `app/api/chat/route.ts`): Vercel AI SDK `streamText` with three tools: `searchProducts`, `buildCart` and `checkout`. Works with Gemini (default, free tier), a local Ollama model, an offline mock model, OpenAI or Anthropic (see AI providers).
 - **Domain** (`src/domain/`): `policy.ts` evaluates a cart against the Layer-1 rules (intent, price finalization, payment history) and the Layer-2 settings and returns `ALLOW`, `NEEDS_APPROVAL` or `DENY` with `{ layer, ruleId, message }` reasons; `layer1.ts` holds the system limits and their env parsing; `spending-policy.ts` holds the Layer-2 defaults, the Zod schema, the time-window helpers and the cool-down classifier; `rule-labels.ts` maps rule IDs to labels; `scanner.ts` flags injection-like text in untrusted seller content; `money.ts` does integer-cent math.
 - **Server** (`src/server/`): orders, the approval state machine, the session spending policy and the pre-charge schedule (`orders.ts`), anonymous demo sessions (`session.ts`), the payment provider (`payments/` — PayPal Sandbox REST or mock), chat rate limits (`rate-limit.ts`) and the demo gate (`demo-gate.ts`).
-- **Data**: Prisma + PostgreSQL. The catalog is seeded from `data/products.json` (30 products, 10 of them carrying prompt-injection payloads). `SessionPolicy` stores the effective Layer-2 policy per session (no row = defaults) plus a pending loosening and its `pendingEffectiveAt`; `Order.captureScheduledAt` / `captureCanceled` drive the pre-charge notice. `AuditLog` is append-only, enforced by database triggers.
+- **Data**: Prisma + PostgreSQL. The catalog is seeded from `data/products.json` (30 products, 10 of them carrying prompt-injection payloads). `SessionPolicy` stores the effective Layer-2 policy per session (no row = defaults) plus a pending loosening and its `pendingEffectiveAt`; `Order.captureScheduledAt` / `captureCanceled` drive the pre-charge notice. `Mandate` (1:1 with a paid order; immutable via a trigger) holds the signed payload, signature and key fingerprint; `RefundRequest` holds one draft per order and mismatch scenario with its evidence and refund result. `AuditLog` is append-only, enforced by database triggers.
 
 Flow: the user saves a purchase intent (and optionally a spending policy) → the agent searches and builds a cart → the server evaluates it → the order shows up in the approval inbox → the human approves → the server creates the PayPal order at the server-computed price → the buyer approves on PayPal → the pre-charge notice counts down (cancellable) → the server verifies and captures.
 
@@ -62,6 +67,7 @@ Deploying to Vercel: set the environment variables below in the project settings
 | `DATABASE_URL` | yes | Postgres connection string used at runtime (pooled URL on Supabase/Neon). |
 | `DIRECT_URL` | yes | Direct (non-pooled) Postgres URL used by `prisma migrate`. Same as `DATABASE_URL` for local Postgres. |
 | `APP_BASE_URL` | production | Public origin for PayPal return/cancel URLs. Falls back to `https://$VERCEL_URL`, then `http://localhost:3000` outside production. |
+| `MANDATE_SIGNING_KEY` | production | Base64 of a PKCS8 PEM **Ed25519** private key that signs intent mandates. Unset outside production = a public development key (with a warning); unset in production = captures are refused. Generate with `node -e "const{generateKeyPairSync:g}=require('crypto');console.log(Buffer.from(g('ed25519').privateKey.export({type:'pkcs8',format:'pem'})).toString('base64'))"`. |
 | `DEMO_PASSWORD` | no | Enables the password gate. Unset = gate disabled. |
 | `SESSION_SECRET` | no | Extra secret for signing the gate cookie. If unset, the key is derived from `DEMO_PASSWORD`. |
 | `RATE_LIMIT_SESSION_PER_HOUR` | no | Chat requests per demo session per hour (default `10`). |
@@ -100,6 +106,7 @@ To record new fixtures, run locally with `AI_PROVIDER=ollama` (or `gemini`) and 
 2. Approve (or confirm) an order in the inbox, click Pay, approve on PayPal, and you return to `/checkout/return`, which shows the pre-charge countdown (with Cancel) and then verifies and captures.
 3. **Sandbox test buyer:** log in on PayPal with a **US Personal** sandbox buyer account, created under *Testing Tools → Sandbox Accounts* at [developer.paypal.com](https://developer.paypal.com). KR Business and KR Personal sandbox buyers are blocked for this flow. No credentials are included in this repository.
 4. `npm run paypal:smoke -- create` / `-- capture` runs one manual end-to-end sandbox payment from the CLI. It is never run by `npm test` or in CI.
+5. `npm run paypal:refund-smoke` then refunds $1.00 of that capture (rerunning returns the same refund), and `npm run paypal:disputes-check` checks that the app can reach `GET /v1/customer/disputes`. Both are local-only and print only statuses, IDs and amounts.
 
 ## Testing
 
@@ -112,7 +119,7 @@ npm run build
 Test database strategy:
 
 - **Unit tests** (`tests/*.test.ts`) need no database and always run: policy, scanner, catalog, PayPal request contracts (mocked `fetch`), the demo gate and proxy, rate limiting (against an in-memory fake of the Prisma `rateLimit` delegate), AI error mapping and checkout URL derivation.
-- **DB integration tests** (`tests/*.db.test.ts`: sessions, approval inbox, checkout state machine, chat rate limit) run only when `TEST_DATABASE_URL` points at a **throwaway** Postgres database. The runner applies the migrations to it first. Without it they are skipped with a notice, and Prisma is given an unreachable URL so no test can touch your dev or production database.
+- **DB integration tests** (`tests/*.db.test.ts`: sessions, approval inbox, checkout state machine, chat rate limit, mandates and refunds) run only when `TEST_DATABASE_URL` points at a **throwaway** Postgres database. The runner applies the migrations to it first. Without it they are skipped with a notice, and Prisma is given an unreachable URL so no test can touch your dev or production database.
 - Tests never call a live LLM or PayPal: AI keys and PayPal credentials are blanked and `AI_PROVIDER=mock` is forced by `scripts/test.ts`, and payment tests use mock providers or mocked `fetch`. `tests/ai-provider.test.ts` covers provider resolution and runs the mock model through `streamText` with in-memory tools (happy path, a flagged red-team product, an intent mismatch, record/replay).
 
 ```sh
@@ -121,7 +128,8 @@ TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/trustcart_test"
 
 ## Current limitations
 
-- Single sandbox merchant, USD only, one purchase unit, CAPTURE intent, no refunds.
+- Single sandbox merchant, USD only, one purchase unit, CAPTURE intent. Refunds are tied to a (simulated) billing mismatch; there is no free-form refund and no dispute creation.
+- The billing check simulates the merchant's fulfillment data; a real integration would compare the mandate with the merchant's actual invoice.
 - Anonymous demo sessions (HttpOnly cookie), no user accounts.
 - The 10 prompt-injection fixtures in `data/products.json` carry an `isMalicious` label used for evaluation only; runtime code never reads it.
 - The per-IP rate limit trusts the first `X-Forwarded-For` hop, which Vercel sets. Behind a proxy that passes client-supplied headers through, treat it as a soft limit.

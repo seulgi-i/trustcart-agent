@@ -54,6 +54,7 @@ function spy(inner: PaymentProvider, opts: { rewriteGet?: (order: Record<string,
       if (opts.failCapture) throw opts.failCapture;
       return result;
     },
+    refundCapture: (captureId, amountCents, key) => inner.refundCapture(captureId, amountCents, key),
   };
   return { provider, calls, created };
 }

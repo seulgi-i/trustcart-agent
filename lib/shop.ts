@@ -15,8 +15,14 @@ export const searchSchema = z.object({
   requestedQuantity: z.number().int().min(-1000).max(1000).nullish().describe('Total quantity the user mentioned in this request. Omit if not mentioned.'),
 });
 // Quantities are only bounded for sanity here; zero, negative and oversized values reach the policy and are DENY there.
+// reason is the model's own note on why it picked the item. It is stored with the cart and recorded in the signed
+// mandate as untrusted, model-written text; it never affects the policy.
 export const cartSchema = z.object({
-  items: z.array(z.object({ productId: z.string().min(1).max(80), quantity: z.number().int().min(-1000).max(1000) })).min(1).max(30),
+  items: z.array(z.object({
+    productId: z.string().min(1).max(80),
+    quantity: z.number().int().min(-1000).max(1000),
+    reason: z.string().max(200).nullish().describe('One short sentence on why this product fits the user\'s request. Optional.'),
+  })).min(1).max(30),
 });
 
 export function matchingProducts(query: string, maxPrice: number | null | undefined, catalog: Product[]) {

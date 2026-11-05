@@ -1,11 +1,13 @@
 import type { Prisma, PrismaClient, SessionPolicy as PolicyRow } from '@prisma/client';
 import { layer1Limits, MAX_WINDOW_MINUTES, MONEY_MOVING, startOfUtcMonth, type Layer1Limits } from '@/src/domain/layer1';
+import { buildMandatePayload, merchantLabel } from '@/src/domain/mandate';
 import { describeReason } from '@/src/domain/rule-labels';
 import { evaluateCart, type CartLine, type Evaluation, type Intent, type PaymentRecord } from '@/src/domain/policy';
 import { classifyPolicyChange, cooldownEnds, defaultSpendingPolicy, makeSpendingPolicySchema, pendingIsDue, type SpendingPolicy } from '@/src/domain/spending-policy';
 import type { RuntimeProduct } from '@/src/server/catalog';
 import { approvalLink, checkProviderOrder, interpretCapture, PayPalError, type CaptureResult, type CheckoutOrder } from '@/src/server/payments/paypal';
 import { checkoutUrls, type CheckoutUrls, type PaymentProvider } from '@/src/server/payments/provider';
+import { mandateSigner, signMandate, type MandateSigner } from '@/src/server/mandate';
 import { ownedBy } from '@/src/server/session';
 
 // The only module that creates orders or moves money. The agent reaches submitCart through its checkout tool;
@@ -18,7 +20,7 @@ const STATUS = { ALLOW: 'READY', NEEDS_APPROVAL: 'NEEDS_APPROVAL', DENY: 'DENIED
 const DECIDABLE = ['READY', 'NEEDS_APPROVAL'];
 type Result = { status: number; body: Record<string, unknown> };
 
-const audit = (db: Pick<PrismaClient, 'auditLog'>, sessionId: string, action: string, outcome: string, detail: unknown) =>
+export const audit = (db: Pick<PrismaClient, 'auditLog'>,sessionId: string, action: string, outcome: string, detail: unknown) =>
   db.auditLog.create({ data: { sessionId, action, outcome, detail: JSON.stringify(detail) } });
 
 export async function latestIntent(db: PrismaClient, sessionId: string) {
@@ -205,6 +207,11 @@ function allowedApprovalUrl(provider: PaymentProvider, href: string | null, urls
   } catch { return false; }
 }
 
+// What the payment decision was made on: the approval re-check's evaluation (priced lines, decision, reasons, scan),
+// the effective spending policy and the Layer-1 limits it ran under. Stored with the PAYMENT_CREATING claim; the
+// mandate is built from it at capture, so a policy change between approval and capture never rewrites it.
+export type PaymentSnapshot = { evaluation: Evaluation; policy: SpendingPolicy; layer1: Layer1Limits; decidedAt: string };
+
 // Approve (NEEDS_APPROVAL) or confirm (READY): creates the provider order for the server-priced total and hands
 // back the buyer approval URL. No money moves here; capture happens only after the buyer returns.
 // hooks.onLocked is a test seam only: it runs right after the approval lock is taken, so a test can hold one approval
@@ -215,7 +222,10 @@ export async function decideOrder(db: PrismaClient, provider: PaymentProvider, s
   if (order.status === 'DENIED') return { status: 409, body: { error: 'A denied cart cannot be approved. Change the cart or the purchase intent.' } };
   if (!DECIDABLE.includes(order.status)) return { status: 409, body: { error: 'This order was already decided.' } };
   // Conditional transition: of two concurrent decisions only one moves the row out of its current status.
-  const claim = (status: string, client: Pick<PrismaClient, 'order'> = db) => client.order.updateMany({ where: { ...ownedBy(sessionId, id), status: order.status }, data: { status, provider: decision === 'APPROVED' ? provider.kind : null } });
+  const claim = (status: string, client: Pick<PrismaClient, 'order'> = db, snapshot?: PaymentSnapshot) => client.order.updateMany({
+    where: { ...ownedBy(sessionId, id), status: order.status },
+    data: { status, provider: decision === 'APPROVED' ? provider.kind : null, ...(snapshot ? { paymentSnapshotJson: JSON.stringify(snapshot) } : {}) },
+  });
 
   if (decision === 'REJECTED') {
     if (!(await claim('REJECTED')).count) return { status: 409, body: { error: 'This order was already decided.' } };
@@ -241,7 +251,7 @@ export async function decideOrder(db: PrismaClient, provider: PaymentProvider, s
     if (recheck.totalCents !== order.totalCents || recheck.decision === 'DENY') return { recheck, urls: null };
     // Built before the claim: a missing APP_BASE_URL must fail here, not leave the order stuck in PAYMENT_CREATING.
     const urls = checkoutUrls(id);
-    if (!(await claim('PAYMENT_CREATING', tx)).count) return { recheck, urls: null };
+    if (!(await claim('PAYMENT_CREATING', tx, { evaluation: recheck, policy, layer1, decidedAt: now.toISOString() })).count) return { recheck, urls: null };
     await audit(tx, sessionId, 'humanReview', 'APPROVED', { orderId: id, provider: provider.kind });
     return { recheck, urls };
   });
@@ -315,11 +325,10 @@ export async function schedulePrecharge(db: PrismaClient, sessionId: string, id:
   const current = await db.order.findFirstOrThrow({ where: ownedBy(sessionId, id) });
   if (current.status !== 'AWAITING_PAYMENT' || current.captureCanceled || !current.captureScheduledAt) return { status: 409, body: { error: 'This order is not awaiting payment.', status: current.status } };
   const lines = (JSON.parse(current.evaluationJson) as Evaluation).lines;
-  const sellers = [...new Set(lines.map(l => l.seller))].join(', ');
   const due = captureDueMs(current.captureScheduledAt, delaySeconds);
   return { status: 200, body: {
     status: 'AWAITING_PAYMENT', orderId: id, totalCents: current.totalCents,
-    merchant: `${sellers || 'TrustCart'} via ${current.provider === 'paypal-sandbox' ? 'PayPal Sandbox' : 'mock provider'}`,
+    merchant: merchantLabel(lines, current.provider),
     items: lines.map(l => `${l.quantity} × ${l.name}`),
     delaySeconds, scheduledAt: current.captureScheduledAt.toISOString(), captureAt: new Date(due).toISOString(), remainingSeconds: secondsUntil(due, now),
   } };
@@ -351,8 +360,10 @@ export async function cancelPrecharge(db: PrismaClient, sessionId: string, id: s
 // PayPal-Request-Id, which PayPal deduplicates against any capture still in flight.
 // The pre-charge notice must have been shown (captureScheduledAt set), the effective policy's delay must have passed
 // on the server clock, and the buyer must not have cancelled it; otherwise 409 before any provider call.
-export async function capturePayment(db: PrismaClient, provider: PaymentProvider, sessionId: string, id: string, now = new Date()): Promise<Result> {
-  const order = await db.order.findFirst({ where: ownedBy(sessionId, id) });
+// A PAID result is written together with a signed intent mandate (src/domain/mandate.ts). The signing key is loaded
+// before anything is claimed, so a production server without MANDATE_SIGNING_KEY throws here and never captures.
+export async function capturePayment(db: PrismaClient, provider: PaymentProvider, sessionId: string, id: string, now = new Date(), signer: () => MandateSigner = mandateSigner): Promise<Result> {
+  const order = await db.order.findFirst({ where: ownedBy(sessionId, id), include: { intent: true } });
   if (!order) return { status: 404, body: { error: 'Order not found.' } };
   if (order.status === 'PAID') return { status: 200, body: paidBody(order) };
   if (order.captureCanceled) return { status: 409, body: { error: 'This payment was cancelled before capture.', status: order.status } };
@@ -362,6 +373,12 @@ export async function capturePayment(db: PrismaClient, provider: PaymentProvider
   if (!order.captureScheduledAt) return { status: 409, body: { error: 'The payment has not been scheduled yet. Open the pre-charge notice first.', status: order.status } };
   const due = captureDueMs(order.captureScheduledAt, await prechargeDelaySeconds(db, sessionId, now));
   if (now.getTime() < due) return { status: 409, body: { error: 'The pre-charge notice period has not ended yet.', status: order.status, retryAfterSeconds: secondsUntil(due, now) } };
+  // An order approved before decision snapshots existed is refused before any provider call. One already left
+  // CAPTURING (money may have moved) is still recorded, its mandate falling back to the stored evaluation and the
+  // policy read now, marked policy.source 'reconstructed_at_recovery' so it is never shown as the payment-time policy.
+  const snapshot = order.paymentSnapshotJson ? JSON.parse(order.paymentSnapshotJson) as PaymentSnapshot : null;
+  if (!snapshot && !recovering) return { status: 409, body: { error: 'This order has no payment decision on record. Ask the agent for a new cart.', status: order.status } };
+  const mandateKey = signer();
 
   const stateNow = async (): Promise<Result> => {
     const now = await db.order.findFirstOrThrow({ where: ownedBy(sessionId, id) });
@@ -401,10 +418,26 @@ export async function capturePayment(db: PrismaClient, provider: PaymentProvider
   }
 
   const status = result.paid ? 'PAID' : 'FAILED';
+  // Signed before the write and stored in the same transaction: an order is never PAID without its mandate. If this
+  // throws, the order stays CAPTURING and a retry recovers it from the provider's COMPLETED capture.
+  // The cart, decision, reasons and policy come from the approval snapshot: what the payment was actually decided on.
+  const basis: Omit<PaymentSnapshot, 'decidedAt'> | null = !result.paid ? null : snapshot
+    ?? { evaluation: JSON.parse(order.evaluationJson) as Evaluation, policy: (await getPolicy(db, sessionId, undefined, now)).policy, layer1: layer1Limits() };
+  const mandate = result.paid && basis ? signMandate(mandateKey, buildMandatePayload({
+    policySource: snapshot ? 'payment_time_snapshot' : 'reconstructed_at_recovery',
+    order: { ...order, provider: provider.kind, providerOrderId, evaluation: basis.evaluation },
+    intent: order.intent, captureId: result.captureId, capturedCents: result.amountCents,
+    policy: basis.policy, layer1: basis.layer1, capturedAt: now,
+  })) : null;
   const recorded = await db.$transaction(async tx => {
     const moved = await tx.order.updateMany({ where: { ...ownedBy(sessionId, id), status: 'CAPTURING' }, data: result.paid ? { status, captureId: result.captureId, failureReason: null } : { status, failureReason: result.reason } });
-    if (moved.count) await audit(tx, sessionId, 'capture', status, { orderId: id, provider: provider.kind, providerOrderId, recovered: recovering, ...result });
-    return moved.count > 0;
+    if (!moved.count) return false;
+    await audit(tx, sessionId, 'capture', status, { orderId: id, provider: provider.kind, providerOrderId, recovered: recovering, ...result });
+    if (mandate) {
+      await tx.mandate.create({ data: { orderId: id, ...mandate } });
+      await audit(tx, sessionId, 'mandate', 'ISSUED', { orderId: id, publicKeyFingerprint: mandate.publicKeyFingerprint });
+    }
+    return true;
   });
   if (!recorded) return stateNow();
   return { status: 200, body: result.paid ? { status, provider: provider.kind, captureId: result.captureId } : { status, provider: provider.kind, reason: result.reason } };

@@ -41,12 +41,14 @@ export function PrechargeCapture({ orderId }: { orderId: string | null }) {
   const [text, setText] = useState('Preparing your payment…');
   const [detail, setDetail] = useState('');
   const [phase, setPhase] = useState<'loading' | 'countdown' | 'capturing' | 'done'>('loading');
+  const [paid, setPaid] = useState(false);
   const started = useRef(false);
   const id = orderId ? encodeURIComponent(orderId) : '';
 
   const finish = (res: Response, body: Outcome) => {
     setPhase('done');
     if (!res.ok) { setText(body.error ?? 'Something went wrong.'); return; }
+    setPaid(body.status === 'PAID');
     setText(DONE[body.status ?? ''] ?? body.status ?? '');
     setDetail(body.captureId ? `provider=${body.provider} capture=${body.captureId}` : body.reason ? `Reason: ${body.reason}` : '');
   };
@@ -105,6 +107,7 @@ export function PrechargeCapture({ orderId }: { orderId: string | null }) {
         <p className="text-lg">{phase === 'capturing' ? 'Completing your payment…' : text}</p>
       )}
       {detail && <p className="mt-1 font-mono text-xs">{detail}</p>}
+      {paid && orderId && <Link href={`/orders/${id}`} className="mt-4 mr-4 inline-block underline">View the signed mandate and refund protection</Link>}
       <BackLink />
     </div>
   );

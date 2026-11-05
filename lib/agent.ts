@@ -59,7 +59,7 @@ export function createShoppingTools(sessionId: string) {
       },
     }),
     buildCart: tool({
-      description: 'Save the full cart (product IDs and quantities) on the server and get a preview decision against the user\'s purchase intent and spending policy. Does not pay.',
+      description: 'Save the full cart (product IDs, quantities and a short reason per item) on the server and get a preview decision against the user\'s purchase intent and spending policy. Does not pay.',
       inputSchema: cartSchema,
       // The preview echoes catalog names and sellers, so building a cart reads untrusted content too.
       execute: async ({ items }) => {

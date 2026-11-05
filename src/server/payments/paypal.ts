@@ -65,7 +65,7 @@ type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 const PAYPAL_ID = /^[A-Z0-9]{1,36}$/;
 
 // Derived, never caller-supplied: a retry of one operation on one order reuses the ID, anything else gets a distinct one.
-export function paypalRequestId(operation: 'create' | 'capture', key: string) {
+export function paypalRequestId(operation: 'create' | 'capture' | 'refund', key: string) {
   return `trustcart-${createHash('sha256').update(`${operation}\0${key}`).digest('hex')}`;
 }
 
@@ -120,6 +120,10 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: FetchLike = 
     if (!PAYPAL_ID.test(orderId)) throw new Error('Invalid PayPal order ID');
     return `/v2/checkout/orders/${orderId}`;
   };
+  const capturePath = (captureId: string) => {
+    if (!PAYPAL_ID.test(captureId)) throw new Error('Invalid PayPal capture ID');
+    return `/v2/payments/captures/${captureId}`;
+  };
 
   return {
     kind: 'paypal-sandbox',
@@ -128,7 +132,28 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: FetchLike = 
       send('POST', '/v2/checkout/orders', paypalRequestId('create', order.referenceId), createOrderBody(order, config, urls)),
     getOrder: orderId => send('GET', orderPath(orderId)),
     captureOrder: orderId => send('POST', `${orderPath(orderId)}/capture`, paypalRequestId('capture', orderId), {}),
+    refundCapture: (captureId, amountCents, idempotencyKey) =>
+      send('POST', `${capturePath(captureId)}/refund`, paypalRequestId('refund', idempotencyKey), refundBody(amountCents)),
   };
+}
+
+// Full refund: no amount, PayPal refunds what is left on the capture. Partial: the amount in USD.
+export const refundBody = (amountCents: number | null) =>
+  amountCents === null ? {} : { amount: { currency_code: 'USD', value: centsToUsdString(amountCents) } };
+
+const refundResponseSchema = z.object({ id: z.string(), status: z.string(), amount: z.object({ currency_code: z.string(), value: z.string() }).optional() });
+export type RefundResult = { ok: true; refundId: string; status: 'COMPLETED' | 'PENDING'; amountCents: number | null } | { ok: false; reason: string; status?: string };
+
+// COMPLETED and PENDING are accepted refunds (PENDING completes later at PayPal). Anything else did not refund.
+// The amount is what PayPal reports, when it reports one in USD.
+export function interpretRefund(response: unknown): RefundResult {
+  const parsed = refundResponseSchema.safeParse(response);
+  if (!parsed.success) return { ok: false, reason: 'UNRECOGNIZED_RESPONSE' };
+  const { id, status, amount } = parsed.data;
+  if (status !== 'COMPLETED' && status !== 'PENDING') return { ok: false, reason: 'REFUND_NOT_COMPLETED', status };
+  let amountCents: number | null = null;
+  if (amount?.currency_code === 'USD') { try { amountCents = usdStringToCents(amount.value); } catch { /* unparseable: keep the requested amount */ } }
+  return { ok: true, refundId: id, status, amountCents };
 }
 
 const moneySchema = z.object({ currency_code: z.string(), value: z.string() });

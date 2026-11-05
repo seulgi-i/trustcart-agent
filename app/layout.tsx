@@ -19,7 +19,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en">
       <body className="min-h-screen bg-stone-50 text-stone-900 antialiased">
         <div className="bg-amber-100 px-4 py-2 text-center text-sm text-amber-900">{providerBanner()}</div>
-        <nav className="mx-auto flex max-w-4xl gap-2 px-4 pt-3 text-sm"><Link href="/" className="rounded px-2 py-1 hover:bg-stone-200">Shop</Link><ReviewBadge /><Link href="/policy" className="rounded px-2 py-1 hover:bg-stone-200">Policy</Link></nav>
+        <nav className="mx-auto flex max-w-4xl gap-2 px-4 pt-3 text-sm"><Link href="/" className="rounded px-2 py-1 hover:bg-stone-200">Shop</Link><ReviewBadge /><Link href="/orders" className="rounded px-2 py-1 hover:bg-stone-200">My orders</Link><Link href="/policy" className="rounded px-2 py-1 hover:bg-stone-200">Policy</Link></nav>
         {children}
       </body>
     </html>

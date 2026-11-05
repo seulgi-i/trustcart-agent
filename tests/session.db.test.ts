@@ -24,7 +24,7 @@ const patch = (id: string, sessionId: string, status: string) => reviewOrder(new
   method: 'PATCH', headers: { 'content-type': 'application/json', cookie: cookie(sessionId) }, body: JSON.stringify({ status }),
 }), { params: Promise.resolve({ id }) });
 // A provider that fails the test if anything tries to create or capture a payment.
-const noPayments: PaymentProvider = { kind: 'mock', merchantId: 'X', createOrder: () => assert.fail('createOrder called'), getOrder: () => assert.fail('getOrder called'), captureOrder: () => assert.fail('captureOrder called') };
+const noPayments: PaymentProvider = { kind: 'mock', merchantId: 'X', createOrder: () => assert.fail('createOrder called'), getOrder: () => assert.fail('getOrder called'), captureOrder: () => assert.fail('captureOrder called'), refundCapture: () => assert.fail('refundCapture called') };
 
 async function sessionWithOrder(cart: CartLine[]) {
   const session = await createSession(db);
@@ -221,8 +221,8 @@ test('chat is rate limited per session with an English 429 before any model call
   const ip = `198.51.100.${Math.floor(Math.random() * 250)}-${Date.now()}`;
   const body = JSON.stringify({ messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hello' }] }] });
   const send = () => chat(new Request('http://localhost/api/chat', { method: 'POST', headers: { cookie: cookie(session.id), 'x-forwarded-for': ip }, body }));
-  // Tests run without AI keys, so allowed requests stop at 503 (no model configured), never at a live API.
-  for (let i = 0; i < 10; i++) assert.equal((await send()).status, 503);
+  // Tests force AI_PROVIDER=mock, so allowed requests are answered by the scripted mock model (200), never a live API.
+  for (let i = 0; i < 10; i++) assert.equal((await send()).status, 200);
   const limited = await send();
   assert.equal(limited.status, 429);
   assert.ok(Number(limited.headers.get('retry-after')) > 0);

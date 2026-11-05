@@ -14,6 +14,8 @@ const env: NodeJS.ProcessEnv = {
   // Chat always uses the scripted mock model (replay fixtures in tests/fixtures/ai); recording is off.
   AI_PROVIDER: 'mock', AI_RECORD: '', OLLAMA_BASE_URL: '', OLLAMA_MODEL: '',
   DEMO_PASSWORD: '', SESSION_SECRET: '', APP_BASE_URL: '', VERCEL_URL: '',
+  // Mandates are signed with the derived development key; tests that need another key pass one explicitly.
+  MANDATE_SIGNING_KEY: '',
   RATE_LIMIT_SESSION_PER_HOUR: '', RATE_LIMIT_GLOBAL_PER_DAY: '',
   // Layer-1 limits at their documented defaults, whatever the developer's .env says.
   LAYER1_VELOCITY_MAX: '', LAYER1_VELOCITY_WINDOW_MINUTES: '', LAYER1_SPLIT_SINGLE_LIMIT_CENTS: '', LAYER1_SPLIT_WINDOW_MINUTES: '',

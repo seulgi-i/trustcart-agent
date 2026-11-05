@@ -17,6 +17,7 @@ model DemoSession {
   intents   Intent[]
   orders    Order[]
   policy    SessionPolicy?
+  refundRequests RefundRequest[]
 }
 
 // Layer-2 spending policy, set only through the /policy page. No row = defaults (see src/domain/spending-policy.ts).
@@ -89,9 +90,57 @@ model Order {
   // once captureCanceled is set. Enforced from these columns, never from an in-memory timer.
   captureScheduledAt DateTime?
   captureCanceled    Boolean   @default(false)
-  createdAt       DateTime    @default(now())
+  // JSON PaymentSnapshot (src/server/orders.ts): the evaluation, effective spending policy and Layer-1 limits that
+  // passed the re-check when the order was approved for payment. Written with the PAYMENT_CREATING claim; the
+  // mandate is built from it at capture, never from the policy in force later.
+  paymentSnapshotJson String?
+  createdAt      DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
+  mandate         Mandate?
+  refundRequests  RefundRequest[]
 
+  @@index([sessionId])
+}
+
+// Signed intent mandate (see src/domain/mandate.ts), written in the same transaction that marks the order PAID.
+// payload is the canonical JSON exactly as signed; signature is base64 Ed25519; publicKeyFingerprint is the hex
+// sha256 of the signing key's SPKI DER. Immutable: the database refuses UPDATE.
+model Mandate {
+  id                   String   @id @default(cuid())
+  orderId              String   @unique
+  order                Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payload              String
+  signature            String
+  publicKeyFingerprint String
+  createdAt            DateTime @default(now())
+}
+
+// One refund draft per (order, mismatch scenario), created when a billing check differs from the mandate.
+// evidenceJson holds the mandate (payload, signature, fingerprint), the simulated billing and the diff.
+// status: DRAFT -> REFUNDING -> REFUNDED | PENDING (PayPal accepted, not yet completed) | FAILED.
+// idempotencyKey is derived from the order and scenario; the PayPal-Request-Id is derived from it, so a retry of the
+// same refund can never become a second refund.
+model RefundRequest {
+  id               String      @id @default(cuid())
+  sessionId        String
+  session          DemoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  orderId          String
+  order            Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  scenario         String
+  idempotencyKey   String      @unique
+  evidenceJson     String
+  suggestedCents   Int
+  capturedCents    Int
+  status           String      @default("DRAFT")
+  mode             String?
+  amountCents      Int?
+  providerRefundId String?     @unique
+  providerStatus   String?
+  failureReason    String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  @@unique([orderId, scenario])
   @@index([sessionId])
 }
 

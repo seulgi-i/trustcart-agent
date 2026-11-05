@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { Evaluation } from '@/src/domain/policy';
 import { describeReason } from '@/src/domain/rule-labels';
@@ -77,6 +78,7 @@ export function Inbox() {
             <ul className="mt-1 text-stone-600">{lines.map(l => <li key={l.productId}>{l.quantity} × {l.name} ({l.productId}, {l.seller}) = {usd(l.subtotalCents)}</li>)}</ul>
 
             {o.providerOrderId && <p className="mt-2 font-mono text-xs">provider={o.provider} order={o.providerOrderId}{o.captureId && ` capture=${o.captureId}`}</p>}
+            {o.status === 'PAID' && <Link href={`/orders/${encodeURIComponent(o.id)}`} className="mt-2 inline-block underline">View mandate, billing check and refunds</Link>}
             {o.failureReason && o.status !== 'CANCELLED' && <p className="mt-1 text-red-700">Reason: {o.failureReason}</p>}
             {(o.status === 'NEEDS_APPROVAL' || o.status === 'READY') && (
               <div className="mt-3 flex gap-2">
