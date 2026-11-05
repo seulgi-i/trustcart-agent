@@ -5,7 +5,8 @@ import type { ShoppingMessage } from '@/lib/agent';
 
 // Tool results are summarized; seller descriptions are never rendered here.
 function toolSummary(type: string, output: unknown) {
-  const o = output as { ok?: boolean; error?: string; products?: { id: string; scannerHits: string[] }[]; preview?: { decision: string; totalCents: number }; status?: string };
+  const o = output as { ok?: boolean; error?: string; blocked?: string; saved?: { category: string; quantity: number }; requested?: { category: string; quantity?: number }; products?: { id: string; scannerHits: string[] }[]; preview?: { decision: string; totalCents: number }; status?: string };
+  if (o?.blocked === 'INTENT_MISMATCH') return `Blocked: intent mismatch (saved ${o.saved?.category} ×${o.saved?.quantity}, requested ${o.requested?.category}${o.requested?.quantity == null ? '' : ` ×${o.requested.quantity}`}). Update Purchase intent first.`;
   if (o?.ok === false) return o.error;
   if (type === 'tool-searchProducts') return `${o.products?.length ?? 0} products found (untrusted descriptions); scanner flagged: ${o.products?.filter(p => p.scannerHits.length).map(p => p.id).join(', ') || 'none'}`;
   if (type === 'tool-buildCart') return `Cart saved on server. Preview: ${o.preview?.decision} · $${((o.preview?.totalCents ?? 0) / 100).toFixed(2)}`;

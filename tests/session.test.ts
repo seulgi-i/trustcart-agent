@@ -2,6 +2,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../lib/db';
 import { createShoppingTools } from '../lib/agent';
+import { searchSchema } from '../lib/shop';
 import { runtimeCatalog } from '../src/server/catalog';
 import { createSession, readSessionId, SESSION_COOKIE, sessionCookie } from '../src/server/session';
 import { decideOrder, saveCart, setIntent, submitCart } from '../src/server/orders';
@@ -64,7 +65,7 @@ test('same turn: reading untrusted content blocks checkout, a new turn may check
   await setIntent(db, session.id, { budgetCents: 4000, category: '캠핑', quantity: 2 });
 
   const turn1 = createShoppingTools(session.id);
-  assert.equal((await run(turn1.searchProducts, { query: '랜턴', maxPrice: null })).ok, true);
+  assert.equal((await run(turn1.searchProducts, { query: '랜턴', maxPrice: null, requestedCategory: '캠핑' })).ok, true);
   assert.equal((await run(turn1.buildCart, { items: [{ productId: 'camp-06', quantity: 2 }] })).ok, true);
   const blocked = await run(turn1.checkout, {});
   assert.equal(blocked.ok, false);
@@ -76,7 +77,84 @@ test('same turn: reading untrusted content blocks checkout, a new turn may check
   const submitted = await run(turn2.checkout, {});
   assert.equal(submitted.ok, true);
   assert.equal(submitted.status, 'READY');
-  assert.equal((await run(turn2.searchProducts, { query: '', maxPrice: null })).ok, false);
+  assert.equal((await run(turn2.searchProducts, { query: '', maxPrice: null, requestedCategory: '캠핑' })).ok, false);
+});
+
+type Gate = { ok: boolean; blocked?: string; products?: { id: string; category: string }[]; saved?: { category: string; quantity: number }; requested?: { category: string; quantity?: number }; mismatches?: { field: string }[] };
+const gate = async (t: ToolLike, input: unknown) => await run(t, input) as unknown as Gate;
+const campingSession = async () => {
+  const session = await createSession(db);
+  await setIntent(db, session.id, { budgetCents: 4000, category: '캠핑', quantity: 2 });
+  return session.id;
+};
+
+test('intent pre-check: off-category search is blocked before any catalog read', async () => {
+  const sessionId = await campingSession();
+  const res = await gate(createShoppingTools(sessionId).searchProducts, { query: '옷걸이', requestedCategory: '생활용품', requestedQuantity: 1 });
+  assert.equal(res.ok, false);
+  assert.equal(res.blocked, 'INTENT_MISMATCH');
+  assert.equal(res.products, undefined);
+  assert.deepEqual(res.saved, { budgetCents: 4000, category: '캠핑', quantity: 2 });
+  assert.deepEqual(res.requested, { category: '생활용품', quantity: 1 });
+  assert.deepEqual(res.mismatches?.map(m => m.field), ['category', 'quantity']);
+  const logs = await db.auditLog.findMany({ where: { sessionId, action: 'searchProducts' }, select: { outcome: true } });
+  assert.deepEqual(logs.map(l => l.outcome), ['INTENT_MISMATCH']);
+});
+
+test('a blocked off-category search reads nothing, so it does not block checkout in the same turn', async () => {
+  const sessionId = await campingSession();
+  const tools = createShoppingTools(sessionId);
+  assert.equal((await gate(tools.searchProducts, { query: '옷걸이', requestedCategory: '생활용품' })).blocked, 'INTENT_MISMATCH');
+  const res = await run(tools.checkout, {});
+  assert.doesNotMatch(String(res.error ?? ''), /untrusted/);
+  const logs = await db.auditLog.findMany({ where: { sessionId, action: 'checkout', outcome: 'BLOCKED' } });
+  assert.equal(logs.length, 0);
+});
+
+test('a search still in flight blocks a parallel checkout', async () => {
+  const sessionId = await campingSession();
+  const tools = createShoppingTools(sessionId);
+  const [search, checkout] = await Promise.all([run(tools.searchProducts, { query: '랜턴', requestedCategory: '캠핑' }), run(tools.checkout, {})]);
+  assert.equal(search.ok, true);
+  assert.equal(checkout.ok, false);
+  assert.match(checkout.error!, /untrusted/);
+});
+
+test('intent pre-check: off-category cart is blocked by catalog category and not saved', async () => {
+  const sessionId = await campingSession();
+  const res = await gate(createShoppingTools(sessionId).buildCart, { items: [{ productId: 'home-13', quantity: 1 }, { productId: 'camp-06', quantity: 1 }] });
+  assert.equal(res.ok, false);
+  assert.equal(res.blocked, 'INTENT_MISMATCH');
+  assert.equal(res.requested?.category, '생활용품');
+  assert.equal((await db.demoSession.findUniqueOrThrow({ where: { id: sessionId } })).cartJson, '[]');
+});
+
+test('intent pre-check: matching category searches only that category and saves the cart', async () => {
+  const sessionId = await campingSession();
+  const tools = createShoppingTools(sessionId);
+  // maxPrice omitted: valid for the schema the model is held to, and for execute.
+  assert.ok(searchSchema.safeParse({ query: '랜턴', requestedCategory: '캠핑' }).success);
+  const lantern = await gate(tools.searchProducts, { query: '랜턴', requestedCategory: '캠핑' });
+  assert.equal(lantern.ok, true);
+  assert.ok(lantern.products!.length > 0);
+  // An empty query cannot spill into other categories.
+  const all = await gate(tools.searchProducts, { query: '', requestedCategory: '캠핑', requestedQuantity: 3 });
+  assert.equal(all.ok, true);
+  assert.ok(all.products!.length > 0 && all.products!.every(p => p.category === '캠핑'));
+  assert.deepEqual(all.mismatches?.map(m => m.field), ['quantity']);
+  assert.equal((await run(tools.buildCart, { items: [{ productId: 'camp-06', quantity: 2 }] })).ok, true);
+  assert.deepEqual(JSON.parse((await db.demoSession.findUniqueOrThrow({ where: { id: sessionId } })).cartJson), [{ productId: 'camp-06', quantity: 2 }]);
+});
+
+test('final policy still flags an off-category cart that bypasses the pre-check', async () => {
+  const sessionId = await campingSession();
+  const saved = await saveCart(db, sessionId, [{ productId: 'home-13', quantity: 2 }]);
+  assert.ok(saved.ok);
+  assert.equal(saved.preview.decision, 'NEEDS_APPROVAL');
+  assert.ok(saved.preview.reasons.some(r => r.rule === 'intent-category'));
+  const submitted = await submitCart(db, sessionId);
+  assert.ok(submitted.ok);
+  assert.equal(submitted.status, 'NEEDS_APPROVAL');
 });
 
 test('D-DEMO: injected cart -> NEEDS_APPROVAL -> badge -> reject -> no capture', async () => {

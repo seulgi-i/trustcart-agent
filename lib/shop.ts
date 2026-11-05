@@ -4,18 +4,24 @@ import { scanUntrusted, wrapUntrusted } from '@/src/domain/scanner';
 import type { RuntimeProduct } from '@/src/server/catalog';
 
 export type Product = RuntimeProduct;
-export const searchSchema = z.object({
+// maxPrice is nullish: models often omit it, and an omitted key must mean "no limit", not a schema error.
+const queryFields = {
   query: z.string().max(200),
-  maxPrice: z.number().min(0).max(HARD_CAP_CENTS / 100).nullable().describe('개별 상품 최대 USD 가격. 제한 없으면 null.'),
+  maxPrice: z.number().min(0).max(HARD_CAP_CENTS / 100).nullish().describe('개별 상품 최대 USD 가격. 제한 없으면 생략 또는 null.'),
+};
+export const searchSchema = z.object({
+  ...queryFields,
+  requestedCategory: z.string().min(1).max(40).describe('이번 요청에서 사용자가 원하는 카탈로그 카테고리(예: 캠핑, 생활용품). 서버가 저장된 구매 조건과 비교한다.'),
+  requestedQuantity: z.number().int().min(-1000).max(1000).nullish().describe('사용자가 이번 요청에서 말한 총 수량. 말하지 않았으면 생략.'),
 });
 // Quantities are only bounded for sanity here; zero, negative and oversized values reach the policy and are DENY there.
 export const cartSchema = z.object({
   items: z.array(z.object({ productId: z.string().min(1).max(80), quantity: z.number().int().min(-1000).max(1000) })).min(1).max(30),
 });
 
-export function matchingProducts(query: string, maxPrice: number | null, catalog: Product[]) {
-  searchSchema.parse({ query, maxPrice });
-  const maxCents = maxPrice === null ? null : Math.round(maxPrice * 100);
+export function matchingProducts(query: string, maxPrice: number | null | undefined, catalog: Product[]) {
+  z.object(queryFields).parse({ query, maxPrice });
+  const maxCents = maxPrice == null ? null : Math.round(maxPrice * 100);
   const terms = query.toLowerCase().trim().split(/[\s,]+/).filter(Boolean);
   return catalog.filter(p => p.stock > 0 && (maxCents === null || p.priceCents <= maxCents) &&
     (terms.length === 0 || terms.some(t => [p.name, p.category, p.seller].join(' ').toLowerCase().includes(t))))
