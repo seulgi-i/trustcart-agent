@@ -1,9 +1,10 @@
-import { tool, type InferUITools, type UIMessage } from 'ai';
+﻿import { tool, type InferUITools, type UIMessage } from 'ai';
 import { z } from 'zod';
 import { cartSchema, matchingProducts, searchSchema, toolProduct } from './shop';
 import { audit, catalog, db } from './db';
 import { latestIntent, saveCart, submitCart } from '@/src/server/orders';
 import { wrapUntrusted } from '@/src/domain/scanner';
+import { gateSearch } from '@/src/domain/intent-gate';
 
 const SAME_TURN = 'Blocked by server: a turn that reads untrusted product content cannot also check out. Checkout is possible in a new user turn.';
 const NO_INTENT = { ok: false as const, error: 'No purchase intent yet. Ask the user to set budget, category and quantity in the form.' };
@@ -18,7 +19,7 @@ function intentMismatch(intent: SavedIntent, categories: string[], mismatches: M
     saved: { budgetCents: intent.budgetCents, category: intent.category, quantity: intent.quantity },
     requested: { category: categories.join(', '), ...(requestedQuantity == null ? {} : { quantity: requestedQuantity }) },
     mismatches,
-    message: `Requested category (${categories.join(', ')}) does not match the saved purchase intent (${intent.category}). Ask the user to update the purchase intent form first; do not search or build carts again.`,
+    message: `Request discarded. Do not retry it. The requested category (${categories.join(', ')}) does not match the saved purchase intent (${intent.category}). Tell the user and ask them to update the purchase intent form if they want it. In later turns, act only on the latest user message.`,
   };
 }
 
@@ -26,7 +27,8 @@ function intentMismatch(intent: SavedIntent, categories: string[], mismatches: M
 // parallel tool calls in one step cannot both read untrusted content and check out: a search/cart call counts as
 // pending until it either returns without reading anything (no intent, intent mismatch) or is promoted to
 // readUntrusted right before the catalog read / saveCart. Checkout blocks on either.
-export function createShoppingTools(sessionId: string) {
+// latestUserText is the text of the newest user message; searchProducts uses it to catch stale or off-intent queries.
+export function createShoppingTools(sessionId: string, latestUserText?: string) {
   const turn = { readUntrusted: false, pendingUntrusted: 0, checkedOut: false };
   return {
     searchProducts: tool({
@@ -48,11 +50,19 @@ export function createShoppingTools(sessionId: string) {
             await audit('searchProducts', 'INTENT_MISMATCH', JSON.stringify({ requested: category, saved: intent.category }), sessionId);
             return intentMismatch(intent, [category], mismatches, requestedQuantity);
           }
+          // The gate reads seller-written product names, so the turn counts as having read untrusted content from here on.
           turn.readUntrusted = true;
-          const inCategory = (await catalog()).filter(p => p.category === intent.category);
-          const products = matchingProducts(query, maxPrice, inCategory).map(toolProduct);
-          await audit('searchProducts', 'UNTRUSTED_READ', JSON.stringify({ ids: products.map(p => p.id) }), sessionId);
-          return { ok: true, products, ...(mismatches.length ? { mismatches } : {}) };
+          const all = await catalog();
+          // Server-side check of the search text itself (and the latest user message), independent of requestedCategory.
+          const gate = gateSearch(intent.category, query, latestUserText, all);
+          if (!gate.ok) {
+            await audit('searchProducts', 'INTENT_MISMATCH', JSON.stringify({ requested: gate.categories, saved: intent.category, source: gate.source }), sessionId);
+            return intentMismatch(intent, gate.categories, [...gate.categories.map(c => ({ field: 'category' as const, saved: intent.category, requested: c })), ...mismatches], requestedQuantity);
+          }
+          const inCategory = all.filter(p => p.category === intent.category);
+          const products = matchingProducts(gate.query, maxPrice, inCategory).map(toolProduct);
+          await audit('searchProducts', 'UNTRUSTED_READ', JSON.stringify({ ids: products.map(p => p.id), ...(gate.rewritten ? { query: gate.query } : {}) }), sessionId);
+          return { ok: true, products, ...(gate.rewritten ? { searchedFor: gate.query, note: 'The query did not match the latest user message, so the server searched the latest request instead.' } : {}), ...(mismatches.length ? { mismatches } : {}) };
         } finally {
           turn.pendingUntrusted--;
         }
@@ -101,3 +111,26 @@ export function createShoppingTools(sessionId: string) {
   };
 }
 export type ShoppingMessage = UIMessage<unknown, never, InferUITools<ReturnType<typeof createShoppingTools>>>;
+
+// Earlier turns whose request the server blocked with INTENT_MISMATCH are void: drop that user message and the
+// assistant reply so a small model does not carry the stale request into the next turn. The latest user message
+// is always kept.
+export function dropBlockedTurns<M extends { role: string; parts: unknown[] }>(messages: M[]): M[] {
+  const lastUser = messages.map(m => m.role).lastIndexOf('user');
+  const blocked = (m: M) => m.role === 'assistant' && m.parts.some(p => {
+    const o = (p as { output?: { blocked?: unknown } })?.output;
+    return !!o && typeof o === 'object' && o.blocked === 'INTENT_MISMATCH';
+  });
+  const drop = new Set<number>();
+  messages.forEach((m, i) => {
+    if (i >= lastUser || !blocked(m)) return;
+    drop.add(i);
+    for (let j = i - 1; j >= 0 && messages[j].role !== 'assistant'; j--) if (messages[j].role === 'user') drop.add(j);
+  });
+  return messages.filter((_, i) => !drop.has(i));
+}
+
+export function latestUserText(messages: { role: string; parts: unknown[] }[]) {
+  const m = [...messages].reverse().find(x => x.role === 'user');
+  return m?.parts.flatMap(p => { const q = p as { type?: string; text?: unknown }; return q?.type === 'text' && typeof q.text === 'string' ? [q.text] : []; }).join('\n') ?? '';
+}
