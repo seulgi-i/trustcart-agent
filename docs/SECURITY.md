@@ -1,91 +1,89 @@
-# TrustCart — 보안 검증 기록
+﻿# TrustCart ??蹂댁븞 寃利?湲곕줉
 
-상태: **NOT RUN — 설계 검토만 수행. 코드 보안 감사 결과가 아니다.**  
-작성: 2026-11-04 KST
+?곹깭: **NOT RUN ???ㅺ퀎 寃?좊쭔 ?섑뻾. 肄붾뱶 蹂댁븞 媛먯궗 寃곌낵媛 ?꾨땲??**  
+?묒꽦: 2026-11-04 KST
 
-## 현재 상태
+## ?꾩옱 ?곹깭
 
-- 아키텍처 수준 위협 검토는 DESIGN.md에 반영했다.
-- Cloudflare security-audit 스킬 원문은 확인했으나 로컬 설치·버전 고정·실행은 하지 않았다.
-- graphify는 설치·실행하지 않았다.
-- 기존 초안은 빌드·테스트·안전성이 검증되지 않았다.
-- 보안 결함 없음, 탐지율 100%, 감사 통과를 주장할 근거가 없다.
+- ?꾪궎?띿쿂 ?섏? ?꾪삊 寃?좊뒗 DESIGN.md??諛섏쁺?덈떎.
+- Cloudflare security-audit ?ㅽ궗 ?먮Ц? ?뺤씤?덉쑝??濡쒖뺄 ?ㅼ튂쨌踰꾩쟾 怨좎젙쨌?ㅽ뻾? ?섏? ?딆븯??
+- graphify???ㅼ튂쨌?ㅽ뻾?섏? ?딆븯??
+- 湲곗〈 珥덉븞? 鍮뚮뱶쨌?뚯뒪?맞룹븞?꾩꽦??寃利앸릺吏 ?딆븯??
+- 蹂댁븞 寃고븿 ?놁쓬, ?먯???100%, 媛먯궗 ?듦낵瑜?二쇱옣??洹쇨굅媛 ?녿떎.
 
-## 단계별 필수 게이트
-
-| 단계 | 코드 범위 | 지정 감사 | graphify | 현재 상태 |
+## ?④퀎蹂??꾩닔 寃뚯씠??
+| ?④퀎 | 肄붾뱶 踰붿쐞 | 吏??媛먯궗 | graphify | ?꾩옱 ?곹깭 |
 |---|---|---|---|---|
-| 1 뼈대 | 설정·secret·세션·DB·초기 checkout | Cloudflare security-audit | 준비만 | NOT RUN |
-| 2 Mandate | 사용자 확인·snapshot·만료·소유권 | Cloudflare security-audit | — | NOT RUN |
-| 3 정책 | 한도·수량·seller·Grant·동시성 | Cloudflare security-audit | — | NOT RUN |
-| 4 인젝션 | 비신뢰 텍스트·LLM tool 경계·평가 label | Cloudflare security-audit | 재생성 및 의존 방향 대조 | NOT RUN |
-| 5 승인·알림·감사 | 정확한 cart 승인·CSRF·상태·로그 | Cloudflare security-audit | 재생성 및 의존 방향 대조 | NOT RUN |
-| 6 PayPal | REST·webhook·멱등성·대사·경쟁 조건 | Cloudflare security-audit | 변경 시 필요성 판단 | NOT RUN |
+| 1 堉덈? | ?ㅼ젙쨌secret쨌?몄뀡쨌DB쨌珥덇린 checkout | Cloudflare security-audit | 以鍮꾨쭔 | NOT RUN |
+| 2 Mandate | ?ъ슜???뺤씤쨌snapshot쨌留뚮즺쨌?뚯쑀沅?| Cloudflare security-audit | ??| NOT RUN |
+| 3 ?뺤콉 | ?쒕룄쨌?섎웾쨌seller쨌Grant쨌?숈떆??| Cloudflare security-audit | ??| NOT RUN |
+| 4 ?몄젥??| 鍮꾩떊猶??띿뒪?맞텹LM tool 寃쎄퀎쨌?됯? label | Cloudflare security-audit | ?ъ깮??諛??섏〈 諛⑺뼢 ?議?| NOT RUN |
+| 5 ?뱀씤쨌?뚮┝쨌媛먯궗 | ?뺥솗??cart ?뱀씤쨌CSRF쨌?곹깭쨌濡쒓렇 | Cloudflare security-audit | ?ъ깮??諛??섏〈 諛⑺뼢 ?議?| NOT RUN |
+| 6 PayPal | REST쨌webhook쨌硫깅벑?굿룸???룰꼍??議곌굔 | Cloudflare security-audit | 蹂寃????꾩슂???먮떒 | NOT RUN |
 
-## 실행 전 준비
+## ?ㅽ뻾 ??以鍮?
+1. ?ъ슜?먭? 吏?뺥븳 異쒖쿂瑜??뺤씤?섍퀬 ?꾨줈?앺듃 踰붿쐞???꾩슂???ㅽ궗/CLI瑜??ㅼ튂쨌踰꾩쟾 怨좎젙?쒕떎.
+2. Cloudflare ?ㅽ궗???ㅽ뻾 ?붽뎄瑜??ㅼ떆 ?쎈뒗?? ?꾩옱 怨듦컻 吏移⑥? 肄붾뱶 ?ㅽ뻾??OS ?섏? 寃⑸━, ?ㅽ듃?뚰겕 ?쒗븳, ?섍꼍 allowlist, ?쎄린 ?꾩슜 ??? scratch ?곌린 諛??먯썝 ?쒗븳???붽뎄?쒕떎.
+3. ???섍꼍??留뚯”?섏? 紐삵븯硫??덉쟾???뺤쟻 寃?좎? ?ㅽ뻾 遺덇?瑜?援щ텇?쒕떎. 吏??full audit???덈떎怨??泥??쒖떆?섏? ?딅뒗??
+4. ?ㅼ젣 PayPal sandbox ?듯빀 寃利앹? ?ㅽ듃?뚰겕 ?녿뒗 媛먯궗 sandbox???숈쟻 ?뚯뒪?몄? 蹂꾧컻?? 媛먯궗?먮뒗 mock provider瑜? ?몃? ?듯빀 寃利앹뿉??sandbox credentials瑜??ъ슜?섎ŉ 寃곌낵瑜?援щ텇?쒕떎.
+5. ?꾧뎄媛 李⑤떒?섎㈃ ?ъ슜?먯뿉寃?洹쇨굅? ?곹뼢??蹂닿퀬?섍퀬 ?泥?諛⑹떇 ?⑹쓽 ?꾩뿉???꾩닔 寃뚯씠???꾨즺濡??쒖떆?섏? ?딅뒗??
 
-1. 사용자가 지정한 출처를 확인하고 프로젝트 범위에 필요한 스킬/CLI를 설치·버전 고정한다.
-2. Cloudflare 스킬의 실행 요구를 다시 읽는다. 현재 공개 지침은 코드 실행에 OS 수준 격리, 네트워크 제한, 환경 allowlist, 읽기 전용 대상, scratch 쓰기 및 자원 제한을 요구한다.
-3. 이 환경을 만족하지 못하면 안전한 정적 검토와 실행 불가를 구분한다. 지정 full audit을 했다고 대체 표시하지 않는다.
-4. 실제 PayPal sandbox 통합 검증은 네트워크 없는 감사 sandbox의 동적 테스트와 별개다. 감사에는 mock provider를, 외부 통합 검증에는 sandbox credentials를 사용하며 결과를 구분한다.
-5. 도구가 차단되면 사용자에게 근거와 영향을 보고하고 대체 방식 합의 전에는 필수 게이트 완료로 표시하지 않는다.
+洹쇨굅: [Cloudflare security-audit](https://github.com/cloudflare/security-audit-skill/blob/main/skills/security-audit/SKILL.md), [Graphify](https://github.com/Graphify-Labs/graphify).
 
-근거: [Cloudflare security-audit](https://github.com/cloudflare/security-audit-skill/blob/main/skills/security-audit/SKILL.md), [Graphify](https://github.com/Graphify-Labs/graphify).
+## ?④퀎 湲곕줉 ?묒떇
 
-## 단계 기록 양식
+媛??④퀎 醫낅즺 ???꾨옒 ?댁슜??????ぉ?쇰줈 異붽??쒕떎.
 
-각 단계 종료 시 아래 내용을 새 항목으로 추가한다.
+- ?ㅽ뻾 ?쇱떆 / commit ?먮뒗 ?뚯씪 snapshot / ?꾧뎄 踰꾩쟾.
+- 媛먯궗 踰붿쐞 / ?쒖쇅 踰붿쐞 / ?ㅽ뻾 ?섍꼍.
+- ?뺤씤???좊ː 寃쎄퀎? ?뚯뒪??紐⑸줉.
+- finding ID, ?ш컖?? ?곹뼢諛쏅뒗 二쇱껜쨌?먯썝, ?뚯씪 ?꾩튂.
+- ?ы쁽 洹쇨굅? ?ㅼ젣/異붿젙 援щ텇.
+- 理쒖냼 ?섏젙 ?댁슜怨??곹뼢.
+- ?섏젙 ???뚯뒪??紐낅졊쨌寃곌낵.
+- ?⑥? ?꾪뿕쨌誘멸?利씲룹감???ъ쑀.
+- ?④퀎 ?먯젙: PASS / FAIL / BLOCKED. 蹂닿퀬?먭? 洹쇨굅 ?놁씠 PASS瑜??곗? ?딅뒗??
 
-- 실행 일시 / commit 또는 파일 snapshot / 도구 버전.
-- 감사 범위 / 제외 범위 / 실행 환경.
-- 확인한 신뢰 경계와 테스트 목록.
-- finding ID, 심각도, 영향받는 주체·자원, 파일 위치.
-- 재현 근거와 실제/추정 구분.
-- 최소 수정 내용과 영향.
-- 수정 후 테스트 명령·결과.
-- 남은 위험·미검증·차단 사유.
-- 단계 판정: PASS / FAIL / BLOCKED. 보고자가 근거 없이 PASS를 쓰지 않는다.
+## ?④퀎 1 湲곕줉 ??2026-11-04
 
-## 단계 1 기록 — 2026-11-04
+- ??? TASK-001 蹂寃쎈텇(?묒뾽 ?몃━, 而ㅻ컠 ??. 湲곗? commit 42ff66e.
+- ?ㅽ뻾 ?섍꼍: ?묒꽦 ?몄뀡?먯꽌 node/npm 紐낅졊??沅뚰븳 ?뱀씤 ?④퀎?먯꽌 李⑤떒?? ?섏〈???ㅼ튂쨌typecheck쨌?뚯뒪?맞룹빋 湲곕룞??**?ㅽ뻾?섏? 紐삵뻽??*.
+- Cloudflare security-audit: **NOT RUN** (?ㅼ튂쨌寃⑸━ ?섍꼍 ?놁쓬).
+- ?묒꽦??寃쎄퀎/?뚯뒪??誘몄떎??: catalog_schema_and_labels, runtime_catalog_hides_ground_truth, money_is_integer_cents, session_ownership, paypal_payload_binding, same_operation_same_request_id, payment_completion_uses_capture_status, sandbox_only.
+- ?ㅺ퀎??議곗튂: Product ?뚯씠釉붋톜untime DTO쨌?ㅼ틦?덉뿉??isMalicious ?쒓굅, ?됯? ?쇰꺼? src/eval/ground-truth.ts濡?遺꾨━. ?뱀씤 API???쒕쾭 諛쒓툒 ?몄뀡怨??뚯쑀沅??꾪꽣 ?곸슜(? ?몄뀡 ID??404). PayPal host 怨좎젙쨌live ?ㅼ젙 嫄곕?쨌?대씪?댁뼵??湲덉븸/payee 臾댁떆쨌?ъ떆?????숈씪 PayPal-Request-Id쨌capture COMPLETED+湲덉븸/?듯솕/payee/reference ?쇱튂留?PAID.
+- 諛쒓껄(誘몄닔?? ?④퀎 4 ???: ?낆꽦 fixture媛 `risk-` ID ?묐몢?ъ? `Fixture Market` seller瑜?怨듭쑀??LLM쨌?ㅼ틦???낅젰?먯꽌 ?ъ떎???뺣떟???몄텧?쒕떎. ?됯? 臾닿껐?깆뿉 ?곹뼢.
+- 諛쒓껄(誘몄닔??: /api/chat???몄뀡쨌?붿껌 ?쒕룄 ?놁쓬. Origin ?ㅻ뜑媛 ?녿뒗 ?붿껌? checkOrigin???듦낵(SameSite=Lax 荑좏궎???섏〈).
+- 留덉씠洹몃젅?댁뀡 SQL? ?섏옉???묒꽦. `prisma migrate dev`濡?schema? drift ?놁쓬???뺤씤?댁빞 ?쒕떎.
+- ?④퀎 ?먯젙: **BLOCKED** ???ㅽ뻾 寃利씲룹???媛먯궗쨌sandbox capture쨌諛고룷 ?뺤씤 ?놁쓬.
 
-- 대상: TASK-001 변경분(작업 트리, 커밋 전). 기준 commit 42ff66e.
-- 실행 환경: 작성 세션에서 node/npm 명령이 권한 승인 단계에서 차단됨. 의존성 설치·typecheck·테스트·앱 기동을 **실행하지 못했다**.
-- Cloudflare security-audit: **NOT RUN** (설치·격리 환경 없음).
-- 작성한 경계/테스트(미실행): catalog_schema_and_labels, runtime_catalog_hides_ground_truth, money_is_integer_cents, session_ownership, paypal_payload_binding, same_operation_same_request_id, payment_completion_uses_capture_status, sandbox_only.
-- 설계상 조치: Product 테이블·runtime DTO·스캐너에서 isMalicious 제거, 평가 라벨은 src/eval/ground-truth.ts로 분리. 승인 API에 서버 발급 세션과 소유권 필터 적용(타 세션 ID는 404). PayPal host 고정·live 설정 거부·클라이언트 금액/payee 무시·재시도 시 동일 PayPal-Request-Id·capture COMPLETED+금액/통화/payee/reference 일치만 PAID.
-- 발견(미수정, 단계 4 대상): 악성 fixture가 `risk-` ID 접두사와 `Fixture Market` seller를 공유해 LLM·스캐너 입력에서 사실상 정답이 노출된다. 평가 무결성에 영향.
-- 발견(미수정): /api/chat에 세션·요청 한도 없음. Origin 헤더가 없는 요청은 checkOrigin을 통과(SameSite=Lax 쿠키에 의존).
-- 마이그레이션 SQL은 수작업 작성. `prisma migrate dev`로 schema와 drift 없음을 확인해야 한다.
-- 단계 판정: **BLOCKED** — 실행 검증·지정 감사·sandbox capture·배포 확인 없음.
+## graphify ?議?湲곗?
 
-## graphify 대조 기준
+?④퀎 4/5?먯꽌 AST 湲곕컲 import/call 洹쇨굅瑜??곗꽑?쒕떎. ?섎???異붾줎 edge瑜??뺤젙 ?섏〈?깆쑝濡?痍④툒?섏? ?딅뒗?? 蹂댁“ 由ъ냼?ㅻ굹 secret ?뚯씪??洹몃옒???앹꽦/?몃? 遺꾩꽍???ы븿?섏? ?딅뒗??
 
-단계 4/5에서 AST 기반 import/call 근거를 우선한다. 의미적 추론 edge를 확정 의존성으로 취급하지 않는다. 보조 리소스나 secret 파일을 그래프 생성/외부 분석에 포함하지 않는다.
+寃?ы븷 寃쎄퀎:
+- client/UI ??server secret/payment infrastructure: 湲덉?.
+- agent ??capture/approval mutation/policy mutation/grant 諛쒓툒: 湲덉?.
+- domain ??Prisma/React/AI SDK/HTTP: 湲덉?.
+- payment state mutation??route蹂꾨줈 以묐났 援ы쁽: 諛쒓껄 ???⑥씪 service濡??대룞.
+- webhook ??寃利??놁씠 Order ?곹깭 吏곸젒 ??? 湲덉?.
+- runtime scanner/search ??fixture isMalicious: 湲덉?.
+- ?덉슜?섎뒗 imports??DESIGN.md??紐⑤뱢 諛⑺뼢怨??議?
 
-검사할 경계:
-- client/UI → server secret/payment infrastructure: 금지.
-- agent → capture/approval mutation/policy mutation/grant 발급: 금지.
-- domain → Prisma/React/AI SDK/HTTP: 금지.
-- payment state mutation을 route별로 중복 구현: 발견 시 단일 service로 이동.
-- webhook → 검증 없이 Order 상태 직접 대입: 금지.
-- runtime scanner/search → fixture isMalicious: 금지.
-- 허용되는 imports는 DESIGN.md의 모듈 방향과 대조.
+?ㅼ젣 ?꾨컲 edge, ?먯씤, ?좏깮???섏젙 ?먮뒗 ?ㅺ퀎 蹂寃? ?ъ깮??寃곌낵瑜?湲곕줉?쒕떎. graphify???고???沅뚰븳 寃?щ? 利앸챸?섏? ?딆쑝誘濡??뚯뒪?몃? ?泥댄븯吏 ?딅뒗??
 
-실제 위반 edge, 원인, 선택한 수정 또는 설계 변경, 재생성 결과를 기록한다. graphify는 런타임 권한 검사를 증명하지 않으므로 테스트를 대체하지 않는다.
+## 諛섎뱶???ы쁽???ㅽ뙣 ?щ?
 
-## 반드시 재현할 실패 사례
-
-- 악성 상품의 대량 구매/승인 생략 지시가 결제 권한을 얻지 못함.
-- 숨은 Unicode 또는 다음 턴 공격을 스캐너가 놓쳐도 서버 조건 위반 거부.
-- 정상 설명의 오탐을 측정하며 ground-truth label은 runtime에 없음.
-- 중복 product ID 합산 후 수량 제한.
-- 승인 이후 cart/가격/통화/정책 변경 시 checkout 차단.
-- 다른 방문자의 order/approval/policy 접근 거부.
-- 결제 버튼 이중 클릭, timeout 후 재시도, webhook 중복·역순.
-- 결과 불명인 주문에 새 payment operation을 만들어 중복 청구하지 않음.
-- PAID를 단순 브라우저 callback이나 HTTP 2xx로 판정하지 않음.
-- P1 authorize/void 채택 시 capture와 void 동시 요청 중 한쪽만 실행.
-- P1 hash chain 채택 시 이벤트 수정 탐지와 전체 체인 재작성 한계를 별도 표시.
+- ?낆꽦 ?곹뭹?????援щℓ/?뱀씤 ?앸왂 吏?쒓? 寃곗젣 沅뚰븳???살? 紐삵븿.
+- ?⑥? Unicode ?먮뒗 ?ㅼ쓬 ??怨듦꺽???ㅼ틦?덇? ?볦퀜???쒕쾭 議곌굔 ?꾨컲 嫄곕?.
+- ?뺤긽 ?ㅻ챸???ㅽ깘??痢≪젙?섎ŉ ground-truth label? runtime???놁쓬.
+- 以묐났 product ID ?⑹궛 ???섎웾 ?쒗븳.
+- ?뱀씤 ?댄썑 cart/媛寃??듯솕/?뺤콉 蹂寃???checkout 李⑤떒.
+- ?ㅻⅨ 諛⑸Ц?먯쓽 order/approval/policy ?묎렐 嫄곕?.
+- 寃곗젣 踰꾪듉 ?댁쨷 ?대┃, timeout ???ъ떆?? webhook 以묐났쨌??닚.
+- 寃곌낵 遺덈챸??二쇰Ц????payment operation??留뚮뱾??以묐났 泥?뎄?섏? ?딆쓬.
+- PAID瑜??⑥닚 釉뚮씪?곗? callback?대굹 HTTP 2xx濡??먯젙?섏? ?딆쓬.
+- P1 authorize/void 梨꾪깮 ??capture? void ?숈떆 ?붿껌 以??쒖そ留??ㅽ뻾.
+- P1 hash chain 梨꾪깮 ???대깽???섏젙 ?먯?? ?꾩껜 泥댁씤 ?ъ옉???쒓퀎瑜?蹂꾨룄 ?쒖떆.
 
 
 ## Stage-1 audit results (2026-11-04, KST, orchestrated by Grok Bot)
@@ -110,3 +108,18 @@ Tools: Claude Code 2.1.299 (implementer), codex-cli 0.155.1 (reviewer, read-only
 | npm audit: 4 high | npm | OPEN, not triaged |
 
 Deferred (codex r2, non-blocking): MockProvider not idempotent (mock only); no positive chat test with explicit allowed Origin. Known design issue: malicious fixtures share `risk-` id prefix / seller (Day-4).
+
+## Stage 1 ??sandbox capture (2026-11-05 KST)
+- Result: PASS
+- Order create ??buyer APPROVED ??capture COMPLETED
+- Amount: $18.99 USD 쨌 captureId=6RF09837AX523421Y 쨌 orderId=8DP40242SC8839515
+- Note: KR Business + KR Personal blocked (domestic KR restriction). Used US Personal buyer.
+- Evidence via 
+`npm run paypal:smoke` (create then capture). Secrets not logged.
+
+## PayPal app checkout wiring (2026-11-05)
+- Provider selection is server-side (`src/server/payments/select.ts`): PayPal sandbox when `PAYPAL_CLIENT_ID`/`PAYPAL_CLIENT_SECRET` (+ `PAYPAL_SANDBOX_MERCHANT_ID`) are set, else MockProvider. Host is asserted to be `api-m.sandbox.paypal.com`; live config fails closed.
+- PayPal order is created only after NEEDS_APPROVAL -> user approve, or ALLOW + explicit user confirm. Amount = server catalog price x qty; client amounts ignored.
+- Capture only for session-owned orders, after GET order shows APPROVED with matching amount/currency/payee. PAID + captureId and the audit entry are written in one transaction; audit table is append-only.
+- Reject / DENY never call create or capture; DENY cannot be approved. Conditional status transition + unique captureId prevent double capture.
+- Tests use mocked fetch only (`tests/checkout.test.ts`); real sandbox is manual via `npm run paypal:smoke`.

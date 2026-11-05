@@ -28,7 +28,7 @@ const captured = (overrides: { status?: string; value?: string; currency?: strin
   purchase_units: [{ reference_id: 'ref-1', payee: { merchant_id: overrides.merchantId ?? 'SANDBOXMERCHANT1' },
     payments: { captures: [{ id: 'CAPTURE1', status: overrides.status ?? 'COMPLETED', amount: { currency_code: overrides.currency ?? 'USD', value: overrides.value ?? '56.97' } }] } }],
 });
-const expected = { referenceId: 'ref-1', totalCents: 5697, merchantId: 'SANDBOXMERCHANT1' };
+const expected = { providerOrderId: 'ORDER1', referenceId: 'ref-1', totalCents: 5697, merchantId: 'SANDBOXMERCHANT1' };
 
 test('paypal_payload_binding', async () => {
   const tampered = priceCheckout({ productId: 'camp-06', quantity: 3, amount: '0.01', currency: 'EUR', seller: 'attacker', payee: { merchant_id: 'EVIL' } }, runtimeCatalog(), 'ref-1');
@@ -93,6 +93,12 @@ test('payment_completion_uses_capture_status', () => {
   assert.deepEqual(interpretCapture(captured(), expected), { paid: true, captureId: 'CAPTURE1', amountCents: 5697 });
 });
 
+test('capture_bound_to_provider_order_id', () => {
+  // A COMPLETED capture for the right amount and payee, but for a different PayPal order, is not our payment.
+  assert.deepEqual(interpretCapture({ ...captured(), id: 'ORDER2' }, expected), { paid: false, reason: 'ORDER_ID_MISMATCH', status: 'COMPLETED' });
+  assert.equal(interpretCapture(captured(), { ...expected, providerOrderId: 'ORDER2' }).paid, false);
+});
+
 test('sandbox_only', async () => {
   assert.throws(() => loadPayPalConfig({ ...env, PAYPAL_API_BASE: 'https://api-m.paypal.com' }));
   assert.throws(() => loadPayPalConfig({ ...env, PAYPAL_ENV: 'live' }));
@@ -118,10 +124,10 @@ test('mock_provider_is_labeled', async () => {
   const capture = await mock.captureOrder(created.id) as { mock: boolean };
   assert.equal(capture.mock, true);
   // A mock capture can never pass as a capture for the real sandbox merchant.
-  assert.equal(interpretCapture(capture, expected).paid, false);
-  const result = interpretCapture(capture, { ...expected, merchantId: mock.merchantId });
+  assert.equal(interpretCapture(capture, { ...expected, providerOrderId: created.id }).paid, false);
+  const result = interpretCapture(capture, { ...expected, providerOrderId: created.id, merchantId: mock.merchantId });
   assert.ok(result.paid && result.captureId.startsWith('MOCK-'));
   const pending = createMockProvider({ captureStatus: 'PENDING' });
   const pendingOrder = await pending.createOrder(order, urls) as { id: string };
-  assert.equal(interpretCapture(await pending.captureOrder(pendingOrder.id), { ...expected, merchantId: pending.merchantId }).paid, false);
+  assert.equal(interpretCapture(await pending.captureOrder(pendingOrder.id), { ...expected, providerOrderId: pendingOrder.id, merchantId: pending.merchantId }).paid, false);
 });

@@ -5,7 +5,7 @@ import { createShoppingTools } from '../lib/agent';
 import { runtimeCatalog } from '../src/server/catalog';
 import { createSession, readSessionId, SESSION_COOKIE, sessionCookie } from '../src/server/session';
 import { decideOrder, saveCart, setIntent, submitCart } from '../src/server/orders';
-import { createMockProvider, type PaymentProvider } from '../src/server/payments/provider';
+import { checkoutUrls, type PaymentProvider } from '../src/server/payments/provider';
 import type { CartLine } from '../src/domain/policy';
 import { GET as inbox } from '../app/api/approvals/route';
 import { PATCH as reviewOrder } from '../app/api/approvals/[id]/route';
@@ -22,7 +22,6 @@ const cookie = (id: string) => `${SESSION_COOKIE}=${id}`;
 const patch = (id: string, sessionId: string, status: string) => reviewOrder(new Request(`http://localhost/api/approvals/${id}`, {
   method: 'PATCH', headers: { 'content-type': 'application/json', cookie: cookie(sessionId) }, body: JSON.stringify({ status }),
 }), { params: Promise.resolve({ id }) });
-const urls = { returnUrl: 'http://localhost/approvals', cancelUrl: 'http://localhost/approvals' };
 // A provider that fails the test if anything tries to create or capture a payment.
 const noPayments: PaymentProvider = { kind: 'mock', merchantId: 'X', createOrder: () => assert.fail('createOrder called'), getOrder: () => assert.fail('getOrder called'), captureOrder: () => assert.fail('captureOrder called') };
 
@@ -93,7 +92,7 @@ test('D-DEMO: injected cart -> NEEDS_APPROVAL -> badge -> reject -> no capture',
   const other = await createSession(db);
   assert.equal((await patch(orderId, other.id, 'REJECTED')).status, 404);
 
-  assert.equal((await decideOrder(db, noPayments, sessionId, orderId, 'REJECTED', urls)).status, 200);
+  assert.equal((await decideOrder(db, noPayments, sessionId, orderId, 'REJECTED')).status, 200);
   const row = await db.order.findUniqueOrThrow({ where: { id: orderId } });
   assert.equal(row.status, 'REJECTED');
   assert.equal(row.providerOrderId, null);
@@ -101,30 +100,26 @@ test('D-DEMO: injected cart -> NEEDS_APPROVAL -> badge -> reject -> no capture',
   assert.equal((await patch(orderId, sessionId, 'APPROVED')).status, 409);
 });
 
-test('approve pays through the mock provider, PAID only on capture COMPLETED', async () => {
+test('approve only creates the mock payment; nothing is captured before the buyer returns', async () => {
   const paid = await sessionWithOrder([{ productId: 'camp-03', quantity: 2 }]);
   assert.equal(paid.status, 'NEEDS_APPROVAL');
   const res = await patch(paid.orderId, paid.sessionId, 'APPROVED');
   assert.equal(res.status, 200);
-  assert.equal((await res.json() as { provider: string }).provider, 'mock');
+  const body = await res.json() as { status: string; provider: string; approvalUrl: string };
+  assert.deepEqual(body, { status: 'AWAITING_PAYMENT', provider: 'mock', approvalUrl: checkoutUrls(paid.orderId).returnUrl });
   const row = await db.order.findUniqueOrThrow({ where: { id: paid.orderId } });
-  assert.equal(row.status, 'PAID');
+  assert.equal(row.status, 'AWAITING_PAYMENT');
   assert.equal(row.provider, 'mock');
-  assert.match(row.captureId!, /^MOCK-/);
-
-  const pending = await sessionWithOrder([{ productId: 'camp-06', quantity: 2 }]);
-  assert.equal(pending.status, 'READY');
-  await decideOrder(db, createMockProvider({ captureStatus: 'PENDING' }), pending.sessionId, pending.orderId, 'APPROVED', urls);
-  const notPaid = await db.order.findUniqueOrThrow({ where: { id: pending.orderId } });
-  assert.equal(notPaid.status, 'FAILED');
-  assert.equal(notPaid.captureId, null);
+  assert.match(row.providerOrderId!, /^MOCK-/);
+  assert.equal(row.captureId, null);
+  assert.equal((await patch(paid.orderId, paid.sessionId, 'APPROVED')).status, 409);
 });
 
 test('DENY cannot be approved', async () => {
   const { sessionId, orderId, status } = await sessionWithOrder([{ productId: 'home-09', quantity: 1 }]);
   assert.equal(status, 'DENIED');
   assert.equal((await patch(orderId, sessionId, 'APPROVED')).status, 409);
-  assert.equal((await decideOrder(db, noPayments, sessionId, orderId, 'APPROVED', urls)).status, 409);
+  assert.equal((await decideOrder(db, noPayments, sessionId, orderId, 'APPROVED')).status, 409);
   assert.equal((await db.order.findUniqueOrThrow({ where: { id: orderId } })).status, 'DENIED');
 });
 

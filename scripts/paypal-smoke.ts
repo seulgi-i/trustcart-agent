@@ -51,7 +51,7 @@ async function main() {
       return;
     }
     const captured = current.status === 'COMPLETED' ? current : await paypal.captureOrder(state.orderId);
-    const result = interpretCapture(captured, { referenceId: state.order.referenceId, totalCents: state.order.totalCents, merchantId: config.merchantId });
+    const result = interpretCapture(captured, { providerOrderId: state.orderId, referenceId: state.order.referenceId, totalCents: state.order.totalCents, merchantId: config.merchantId });
     if (result.paid) {
       console.log(`PAID amount=${formatUsd(result.amountCents)} USD captureStatus=COMPLETED captureId=${result.captureId}`);
     } else {

@@ -49,3 +49,9 @@ The script prints only the order ID, amount, capture status and capture ID. It i
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## PayPal sandbox checkout
+1. Copy `.env.example` to `.env` and set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_SANDBOX_MERCHANT_ID` (sandbox app only). Without them the app uses the mock provider.
+2. `npm run db:setup && npm run dev`, then open http://localhost:3000. Approve (or confirm) an order in the inbox, click Pay, approve on PayPal, and you return to `/checkout/return`, which captures and shows the result.
+3. **Sandbox buyer note:** KR Business and KR Personal sandbox buyers are blocked for this flow. Use a **US Personal** sandbox buyer account.
+4. `npm run paypal:smoke` runs a manual end-to-end sandbox check. It is not run in CI or by `npm test`.

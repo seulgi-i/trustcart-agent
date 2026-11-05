@@ -2,13 +2,12 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { checkOrigin } from '@/lib/http';
 import { decideOrder } from '@/src/server/orders';
-import { createMockProvider } from '@/src/server/payments/provider';
+import { paymentProvider } from '@/src/server/payments/select';
 import { findSession } from '@/src/server/session';
 export const runtime = 'nodejs';
 
-// D-DEMO runs on the mock provider only. No PayPal request is made from this route.
-const provider = createMockProvider();
-
+// Approve or confirm creates the provider order and returns the buyer approval URL; nothing is captured here.
+// Reject never touches the provider.
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!checkOrigin(request)) return Response.json({ error: 'Origin not allowed.' }, { status: 403 });
   let status: 'APPROVED' | 'REJECTED';
@@ -18,8 +17,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const session = await findSession(db, request);
     if (!session) return Response.json({ error: 'Demo session required.' }, { status: 401 });
-    const origin = new URL(request.url).origin;
-    const result = await decideOrder(db, provider, session.id, id, status, { returnUrl: `${origin}/approvals`, cancelUrl: `${origin}/approvals` });
+    const result = await decideOrder(db, paymentProvider(), session.id, id, status);
     return Response.json(result.body, { status: result.status });
   } catch { return Response.json({ error: 'Could not process the decision. Try again.' }, { status: 500 }); }
 }

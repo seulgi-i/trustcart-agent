@@ -42,7 +42,8 @@ model Product {
   description String
 }
 
-// status: READY | NEEDS_APPROVAL | DENIED -> CAPTURE_PENDING -> PAID | FAILED, or REJECTED. DENIED is terminal.
+// status: READY | NEEDS_APPROVAL -> PAYMENT_CREATING -> AWAITING_PAYMENT -> CAPTURING -> PAID | FAILED,
+// or -> REJECTED (inbox) / CANCELLED (buyer cancel at PayPal). DENIED is terminal.
 model Order {
   id              String      @id @default(cuid())
   sessionId       String
@@ -54,8 +55,10 @@ model Order {
   totalCents      Int
   evaluationJson  String
   provider        String?
-  providerOrderId String?
-  captureId       String?
+  providerOrderId String?     @unique
+  approvalUrl     String?
+  captureId       String?     @unique
+  failureReason   String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 

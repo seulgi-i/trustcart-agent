@@ -38,7 +38,7 @@ export function evaluateCart(intent: Intent, cart: CartLine[], catalog: RuntimeP
     if (!Number.isSafeInteger(quantity) || quantity < 1) { deny('invalid-quantity', '>= 1', `${p.id}: ${quantity}`); continue; }
     if (quantity > MAX_UNITS_PER_LINE) { deny('max-units-per-line', `<= ${MAX_UNITS_PER_LINE}`, `${p.id}: ${quantity}`); continue; }
     if (quantity > p.stock) deny('out-of-stock', `<= ${p.stock} in stock`, `${p.id}: ${quantity}`);
-    const s = scanUntrusted(`${p.name}\n${p.description}`);
+    const s = scanUntrusted(`${p.name}\n${p.seller}\n${p.description}`);
     if (s.flagged) scan.push({ productId: p.id, hits: s.hits });
     lines.push({ productId: p.id, name: p.name, category: p.category, seller: p.seller, quantity, unitCents: p.priceCents, subtotalCents: lineTotalCents(p.priceCents, quantity) });
   }

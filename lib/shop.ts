@@ -22,11 +22,14 @@ export function matchingProducts(query: string, maxPrice: number | null, catalog
     .sort((a, b) => a.priceCents - b.priceCents);
 }
 
-// What the model sees: server-owned fields as values, the seller description wrapped as inert data plus scanner hits.
+// What the model sees: server-owned fields as values, seller-written name, seller and description wrapped as inert
+// data plus scanner hits.
 export function toolProduct(p: Product) {
   return {
-    id: p.id, name: p.name, category: p.category, seller: p.seller, priceUSD: p.priceCents / 100, stock: p.stock,
+    id: p.id, category: p.category, priceUSD: p.priceCents / 100, stock: p.stock,
+    name: wrapUntrusted(`product:${p.id}:name`, p.name),
+    seller: wrapUntrusted(`product:${p.id}:seller`, p.seller),
     description: wrapUntrusted(`product:${p.id}`, p.description),
-    scannerHits: scanUntrusted(`${p.name}\n${p.description}`).hits,
+    scannerHits: scanUntrusted(`${p.name}\n${p.seller}\n${p.description}`).hits,
   };
 }

@@ -6,6 +6,13 @@ import type { PaymentProvider } from '@/src/server/payments/provider';
 
 // Server-only thin REST adapter for PayPal Orders v2, CAPTURE intent. The demo never talks to the live API.
 export const PAYPAL_SANDBOX_API = 'https://api-m.sandbox.paypal.com';
+const PAYPAL_SANDBOX_HOST = 'api-m.sandbox.paypal.com';
+
+// Checked on the configured base and again on every request URL, so no code path can reach another host.
+export function assertSandboxHost(url: string) {
+  const { protocol, host } = new URL(url);
+  if (protocol !== 'https:' || host !== PAYPAL_SANDBOX_HOST) throw new Error('Only the PayPal sandbox API is allowed in this demo.');
+}
 
 export type PayPalConfig = { apiBase: typeof PAYPAL_SANDBOX_API; clientId: string; clientSecret: string; merchantId: string };
 type Env = Record<string, string | undefined>;
@@ -64,6 +71,7 @@ export function paypalRequestId(operation: 'create' | 'capture', key: string) {
 
 export function createPayPalClient(config: PayPalConfig, fetchImpl: FetchLike = fetch, maxAttempts = 3): PaymentProvider {
   if (config.apiBase !== PAYPAL_SANDBOX_API) throw new Error('Only the PayPal sandbox API is allowed in this demo.');
+  assertSandboxHost(config.apiBase);
   let token: { value: string; expiresAt: number } | null = null;
 
   async function accessToken() {
@@ -81,6 +89,7 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: FetchLike = 
 
   // The same requestId is reused for every attempt of one logical operation so PayPal can deduplicate it.
   async function send(method: 'GET' | 'POST', path: string, requestId?: string, body?: unknown): Promise<unknown> {
+    assertSandboxHost(`${config.apiBase}${path}`);
     for (let attempt = 1; ; attempt++) {
       let res: Response;
       try {
@@ -129,6 +138,7 @@ const orderResponseSchema = z.object({
   links: z.array(z.object({ rel: z.string(), href: z.string() })).optional(),
   purchase_units: z.array(z.object({
     reference_id: z.string().optional(),
+    amount: moneySchema.optional(),
     payee: z.object({ merchant_id: z.string().optional() }).optional(),
     payments: z.object({ captures: z.array(z.object({ id: z.string(), status: z.string(), amount: moneySchema })).optional() }).optional(),
   })).optional(),
@@ -139,13 +149,38 @@ export function approvalLink(response: unknown): string | null {
   return parsed.success ? parsed.data.links?.find(l => l.rel === 'payer-action' || l.rel === 'approve')?.href ?? null : null;
 }
 
-export type CaptureResult = { paid: true; captureId: string; amountCents: number } | { paid: false; reason: string; status?: string };
+export type ExpectedPayment = { providerOrderId: string; referenceId: string; totalCents: number; merchantId: string };
+export type OrderCheck = { ok: true; status: 'APPROVED' | 'COMPLETED' } | { ok: false; reason: string; status?: string };
+
+// Run on a fresh GET before capture. The order must be the one we created, for the server-priced amount in USD,
+// payable to our merchant. COMPLETED means an earlier capture already went through and only needs recording.
+export function checkProviderOrder(response: unknown, expected: ExpectedPayment): OrderCheck {
+  const parsed = orderResponseSchema.safeParse(response);
+  if (!parsed.success) return { ok: false, reason: 'UNRECOGNIZED_RESPONSE' };
+  const { id, status } = parsed.data;
+  if (id !== expected.providerOrderId) return { ok: false, reason: 'ORDER_ID_MISMATCH', status };
+  const units = parsed.data.purchase_units ?? [];
+  if (units.length !== 1) return { ok: false, reason: 'UNEXPECTED_PURCHASE_UNITS', status };
+  const [unit] = units;
+  if (unit.reference_id !== expected.referenceId) return { ok: false, reason: 'REFERENCE_MISMATCH', status };
+  if (unit.payee?.merchant_id !== expected.merchantId) return { ok: false, reason: 'PAYEE_MISMATCH', status };
+  const { amount } = unit;
+  if (!amount || amount.currency_code !== 'USD') return { ok: false, reason: 'CURRENCY_MISMATCH', status };
+  let amountCents: number;
+  try { amountCents = usdStringToCents(amount.value); } catch { return { ok: false, reason: 'AMOUNT_UNPARSEABLE', status }; }
+  if (amountCents !== expected.totalCents) return { ok: false, reason: 'AMOUNT_MISMATCH', status };
+  if (status !== 'APPROVED' && status !== 'COMPLETED') return { ok: false, reason: 'ORDER_NOT_APPROVED', status };
+  return { ok: true, status };
+}
+
+export type CaptureResult ={ paid: true; captureId: string; amountCents: number } | { paid: false; reason: string; status?: string };
 
 // PAID only when the capture resource itself is COMPLETED and bound to the expected amount, currency, payee and order.
 // A redirect, an APPROVED order or a 2xx response is not proof of payment.
-export function interpretCapture(response: unknown, expected: { referenceId: string; totalCents: number; merchantId: string }): CaptureResult {
+export function interpretCapture(response: unknown, expected: ExpectedPayment): CaptureResult {
   const parsed = orderResponseSchema.safeParse(response);
   if (!parsed.success) return { paid: false, reason: 'UNRECOGNIZED_RESPONSE' };
+  if (parsed.data.id !== expected.providerOrderId) return { paid: false, reason: 'ORDER_ID_MISMATCH', status: parsed.data.status };
   const units = parsed.data.purchase_units ?? [];
   if (units.length !== 1) return { paid: false, reason: 'UNEXPECTED_PURCHASE_UNITS', status: parsed.data.status };
   const [unit] = units;
